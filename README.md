@@ -2,6 +2,23 @@
 
 `youyong5/deadlineplan` is a small, reusable MoonBit library for planning deadline-bound tasks. It deliberately models generic work rather than a particular domain: a student timetable and a software delivery plan can use the same API.
 
+The **MoonBit scheduling library is the primary deliverable**. The CLI and interactive academic/project page are application examples; no `Course`, `Homework`, or `Exam` type is part of the core API.
+
+## Start from a clone
+
+Install the [MoonBit toolchain](https://docs.moonbitlang.com/en/latest/tutorial/tour.html) and Node.js 24 or newer, then run these commands from a terminal:
+
+```sh
+git clone https://github.com/youyong5/DeadlinePlan.git
+cd DeadlinePlan
+moon run examples/library_demo
+moon run --target js cmd/deadlineplan -- examples/student-plan.v1.json
+node demo/build.mjs
+node demo/serve.mjs
+```
+
+The first command after cloning invokes the public MoonBit `schedule(...)` API directly and prints `draft: [0, 30)`, `review: [50, 70)`, and `Unscheduled: 0`. The second uses the CLI to parse the versioned JSON example and schedule it through the same public library. The last two build and serve the browser example at <http://127.0.0.1:4173>; stop its server with Ctrl+C. Switch to **项目交付** in the page for a non-academic example. See the sections below for the full API, JSON rules, and alternative CLI commands.
+
 All times are signed 32-bit integer UTC minutes relative to the Unix epoch. Negative values are valid. Every interval is half-open: `[start, end)`. An event ending at minute `60` does not conflict with work beginning at minute `60`; a task may finish exactly at its deadline.
 
 ## Public API
@@ -29,7 +46,8 @@ Every numeric time is a signed 32-bit **integer UTC minute since 1970-01-01T00:0
   "availability": [{ "start": 29875680, "end": 29876220 }],
   "fixed_events": [
     { "id": "morning-lecture", "start": 29875740, "end": 29875830 },
-    { "id": "afternoon-lecture", "start": 29875980, "end": 29876070 }
+    { "id": "afternoon-lecture", "start": 29875980, "end": 29876070 },
+    { "id": "biology-exam", "start": 29876160, "end": 29876220 }
   ],
   "tasks": [
     { "id": "topic-announced", "duration_minutes": 1, "deadline": 29875681, "dependencies": [] },
@@ -148,3 +166,9 @@ node demo/build.mjs
 node tests/demo-browser-smoke.mjs
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/cli-smoke.ps1
 ```
+
+GitHub Actions runs these checks in a clean Ubuntu environment, installs MoonBit and Node.js, builds the JS bridge, and verifies the CLI and both browser scenarios in headless Chrome. The browser test can use `CHROME_BIN` to select Chrome and `DEADLINEPLAN_SCREENSHOT=0` to avoid rewriting the checked-in screenshot.
+
+## Packaging and release scope
+
+`moon.mod` declares the `youyong5/deadlineplan` module at version `0.1.0`, Apache-2.0, this README, and the repository URL. The root package is the reusable library. `moon package --list` inspects the prospective Mooncakes archive without publishing it: `.moonignore` keeps local tooling, tests, the CLI, and the browser demo out of that archive, while retaining the library and runnable example inputs. The GitHub repository contains the full source and demos. No `moon publish` step is part of CI.

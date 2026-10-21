@@ -1,0 +1,5 @@
+# Keep the Mooncakes archive focused on the library and runnable input examples.
+/AGENTS.md
+/cmd/
+/demo/
+/tests/

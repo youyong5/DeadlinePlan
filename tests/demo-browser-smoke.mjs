@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const site = 'http://127.0.0.1:4173';
-const chromePath = process.env.CHROME_BIN ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+const chromePath = process.env.CHROME_BIN ?? (process.platform === 'win32'
+  ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+  : '/usr/bin/google-chrome');
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 
 async function eventually(callback, description) {
@@ -111,9 +113,11 @@ try {
   assert.equal(student.confirmed, 1);
   assert.match(student.exam, /生物学期中考试/);
   assert.match(student.room, /理科楼 A203/);
-  const screenshot = await devtools.call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
-  writeFileSync(join(root, 'demo', 'screenshot.png'), Buffer.from(screenshot.data, 'base64'));
-  console.log('student: 5 blocks, 1 confirmed, classroom/exam visible; screenshot saved');
+  if (process.env.DEADLINEPLAN_SCREENSHOT !== '0') {
+    const screenshot = await devtools.call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+    writeFileSync(join(root, 'demo', 'screenshot.png'), Buffer.from(screenshot.data, 'base64'));
+  }
+  console.log('student: 5 blocks, 1 confirmed, classroom/exam visible');
 
   const edited = await devtools.evaluate(`(() => {
     const input = document.querySelector('.duration-input[data-task-index="1"]');

@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Show toolchain versions
+        run: |
+          moon version --all
+          node --version
+          pwsh --version
+
+      - name: Check and test MoonBit library on Wasm and JS
+        run: |
+          moon check --deny-warn
+          moon check --target js --deny-warn
+          moon test
+          moon test --target js
+
+      - name: Check generated API and formatting
+        run: |
+          moon info
+          moon fmt
+          git diff --exit-code
+
+      - name: Run the public API example
+        run: moon run examples/library_demo
+
+      - name: Build browser demo and inspect publication archive
+        run: |
+          node demo/build.mjs
+          moon package --list
+
+      - name: Verify CLI commands
+        shell: pwsh
+        run: ./tests/cli-smoke.ps1
+
+      - name: Install headless Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          install-dependencies: true
+
+      - name: Verify interactive browser demo
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+          DEADLINEPLAN_SCREENSHOT: '0'
+        run: node tests/demo-browser-smoke.mjs

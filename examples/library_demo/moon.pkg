@@ -1,0 +1,5 @@
+import {
+  "youyong5/deadlineplan" @plan,
+}
+
+pkgtype(kind: "executable")

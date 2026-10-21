@@ -15,11 +15,11 @@ version = "0.1.0"
 
 readme = "README.md"
 
-repository = ""
+repository = "https://github.com/youyong5/DeadlinePlan"
 
 license = "Apache-2.0"
 
-keywords = [ ]
+keywords = [ "scheduling", "deadlines", "planning" ]
 
 preferred_target = "wasm"
 
