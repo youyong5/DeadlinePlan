@@ -489,31 +489,76 @@ fn find_split_blocks(
   let mut index = 0
   while index < gaps.length() && remaining > 0 {
     let gap = gaps[index]
-    let capacity = gap.end.to_int64() - gap.start.to_int64()
-    let remaining_long = remaining.to_int64()
-    let minimum_long = minimum.to_int64()
-    let mut take = 0L
-    if capacity >= remaining_long {
-      take = remaining_long
-    } else if remaining_long >= minimum_long + minimum_long {
-      // Reserve a full minimum-sized final block. If this would make the
-      // current block too short, skip this gap instead of creating a short tail.
-      take = min_long(capacity, remaining_long - minimum_long)
-      if take < minimum_long {
-        take = 0L
+    match earliest_feasible_take(gaps, index, remaining, minimum) {
+      Some(take) => {
+        // The selected amount fits this gap, so narrowing to Int32 is safe.
+        let end = (gap.start.to_int64() + take.to_int64()).to_int()
+        proposed.push({ start: gap.start, end, })
+        remaining = remaining - take
       }
-    }
-    if take > 0L {
-      let end = (gap.start.to_int64() + take).to_int()
-      proposed.push({ start: gap.start, end, })
-      remaining = remaining - take.to_int()
+      None => ()
     }
     index = index + 1
   }
   if remaining == 0 {
     Ok(proposed)
   } else {
-    Err(SplitWorkIncomplete(remaining))
+    // No tentative block is committed; all of this task's work is still open.
+    Err(SplitWorkIncomplete(duration))
+  }
+}
+
+///|
+/// Find the largest amount for this gap that leaves a feasible allocation in
+/// later gaps. A suffix using k gaps can hold every integer amount from
+/// k * minimum through the sum of its k largest capacities.
+fn earliest_feasible_take(
+  gaps : Array[TimeWindow],
+  index : Int32,
+  remaining : Int32,
+  minimum : Int32,
+) -> Int32? {
+  let capacity = gaps[index].end.to_int64() - gaps[index].start.to_int64()
+  let minimum_long = minimum.to_int64()
+  if capacity < minimum_long {
+    return None
+  }
+  let future_capacities : Array[Int64] = []
+  let mut next = index + 1
+  while next < gaps.length() {
+    let future = gaps[next].end.to_int64() - gaps[next].start.to_int64()
+    if future >= minimum_long {
+      future_capacities.push(future)
+    }
+    next = next + 1
+  }
+  future_capacities.sort_by_key(value => value)
+  let remaining_long = remaining.to_int64()
+  let mut suffix_capacity = 0L
+  let mut suffix_count = 0
+  let mut best = 0L
+  while suffix_count <= future_capacities.length() &&
+        suffix_count.to_int64() * minimum_long <= remaining_long {
+    let lower = max_long(minimum_long, remaining_long - suffix_capacity)
+    let upper = min_long(
+      capacity,
+      remaining_long - suffix_count.to_int64() * minimum_long,
+    )
+    if lower <= upper && upper > best {
+      best = upper
+    }
+    if suffix_count < future_capacities.length() {
+      let largest = future_capacities[future_capacities.length() -
+        1 -
+        suffix_count]
+      suffix_capacity = min_long(remaining_long, suffix_capacity + largest)
+    }
+    suffix_count = suffix_count + 1
+  }
+  if best >= minimum_long {
+    Some(best.to_int())
+  } else {
+    None
   }
 }
 
@@ -669,6 +714,15 @@ fn min_int(left : Int32, right : Int32) -> Int32 {
 ///|
 fn min_long(left : Int64, right : Int64) -> Int64 {
   if left < right {
+    left
+  } else {
+    right
+  }
+}
+
+///|
+fn max_long(left : Int64, right : Int64) -> Int64 {
+  if left > right {
     left
   } else {
     right

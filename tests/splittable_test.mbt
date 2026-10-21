@@ -1,4 +1,30 @@
 ///|
+test "split allocation can shorten each of three equal gaps" {
+  match
+    @deadlineplan.schedule(
+      [
+        @deadlineplan.window(0, 50),
+        @deadlineplan.window(60, 110),
+        @deadlineplan.window(120, 170),
+      ],
+      [],
+      [@deadlineplan.splittable_task("work", 120, 170, [], 40)],
+    ) {
+    Ok(plan) => {
+      assert_eq(plan.unscheduled.length(), 0)
+      assert_eq(plan.blocks.length(), 3)
+      assert_eq(plan.blocks[0].window.start, 0)
+      assert_eq(plan.blocks[0].window.end, 40)
+      assert_eq(plan.blocks[1].window.start, 60)
+      assert_eq(plan.blocks[1].window.end, 100)
+      assert_eq(plan.blocks[2].window.start, 120)
+      assert_eq(plan.blocks[2].window.end, 160)
+    }
+    Err(_) => assert_true(false)
+  }
+}
+
+///|
 test "project handoff is split and its review waits for the final block" {
   match
     @deadlineplan.schedule(
@@ -121,7 +147,7 @@ test "failed split work releases every tentative block and blocks its dependent"
       assert_eq(plan.blocks[0].window.end, 10)
       assert_eq(plan.unscheduled.length(), 2)
       assert_eq(plan.unscheduled[0].task_id, "incomplete")
-      assert_true(plan.unscheduled[0].reason is SplitWorkIncomplete(8))
+      assert_true(plan.unscheduled[0].reason is SplitWorkIncomplete(18))
       assert_eq(plan.unscheduled[1].task_id, "dependent")
       assert_true(
         plan.unscheduled[1].reason is DependencyNotScheduled("incomplete"),
@@ -213,5 +239,198 @@ test "split calculations safely span both ends of the Int32 minute range" {
       assert_eq(plan.blocks[1].window.end, 2147483647)
     }
     Err(_) => assert_true(false)
+  }
+  match
+    @deadlineplan.schedule(
+      [
+        @deadlineplan.window(-2147483648, -2147483600),
+        @deadlineplan.window(0, 50),
+        @deadlineplan.window(2147483600, 2147483647),
+      ],
+      [],
+      [
+        @deadlineplan.splittable_task(
+          "extreme-rebalance",
+          120,
+          2147483647,
+          [],
+          40,
+        ),
+      ],
+    ) {
+    Ok(plan) => {
+      assert_eq(plan.unscheduled.length(), 0)
+      assert_eq(plan.blocks.length(), 3)
+      assert_eq(plan.blocks[0].window.start, -2147483648)
+      assert_eq(plan.blocks[0].window.end, -2147483608)
+      assert_eq(plan.blocks[1].window.start, 0)
+      assert_eq(plan.blocks[1].window.end, 40)
+      assert_eq(plan.blocks[2].window.start, 2147483600)
+      assert_eq(plan.blocks[2].window.end, 2147483640)
+    }
+    Err(_) => assert_true(false)
+  }
+}
+
+///|
+test "different gap capacities may require skipping or shortening a gap" {
+  match
+    @deadlineplan.schedule(
+      [
+        @deadlineplan.window(0, 5),
+        @deadlineplan.window(10, 18),
+        @deadlineplan.window(20, 28),
+      ],
+      [],
+      [@deadlineplan.splittable_task("skip-short", 16, 28, [], 8)],
+    ) {
+    Ok(plan) => {
+      assert_eq(plan.unscheduled.length(), 0)
+      assert_eq(plan.blocks.length(), 2)
+      assert_eq(plan.blocks[0].window.start, 10)
+      assert_eq(plan.blocks[0].window.end, 18)
+      assert_eq(plan.blocks[1].window.start, 20)
+      assert_eq(plan.blocks[1].window.end, 28)
+    }
+    Err(_) => assert_true(false)
+  }
+  match
+    @deadlineplan.schedule(
+      [
+        @deadlineplan.window(0, 5),
+        @deadlineplan.window(10, 17),
+        @deadlineplan.window(20, 27),
+      ],
+      [],
+      [@deadlineplan.splittable_task("use-earliest", 12, 27, [], 5)],
+    ) {
+    Ok(plan) => {
+      assert_eq(plan.unscheduled.length(), 0)
+      assert_eq(plan.blocks.length(), 2)
+      assert_eq(plan.blocks[0].window.start, 0)
+      assert_eq(plan.blocks[0].window.end, 5)
+      assert_eq(plan.blocks[1].window.start, 10)
+      assert_eq(plan.blocks[1].window.end, 17)
+    }
+    Err(_) => assert_true(false)
+  }
+}
+
+///|
+test "sufficient raw capacity is not enough when every block has a minimum" {
+  match
+    @deadlineplan.schedule(
+      [
+        @deadlineplan.window(0, 5),
+        @deadlineplan.window(10, 15),
+        @deadlineplan.window(20, 25),
+      ],
+      [],
+      [@deadlineplan.splittable_task("cannot-pack", 11, 25, [], 4)],
+    ) {
+    Ok(plan) => {
+      assert_eq(plan.blocks.length(), 0)
+      assert_eq(plan.unscheduled.length(), 1)
+      assert_true(plan.unscheduled[0].reason is SplitWorkIncomplete(11))
+    }
+    Err(_) => assert_true(false)
+  }
+}
+
+///|
+fn exhaustive_split_exists(
+  capacities : Array[Int32],
+  index : Int32,
+  remaining : Int32,
+  minimum : Int32,
+) -> Bool {
+  if remaining == 0 {
+    return true
+  }
+  if index == capacities.length() {
+    return false
+  }
+  if exhaustive_split_exists(capacities, index + 1, remaining, minimum) {
+    return true
+  }
+  let mut take = minimum
+  while take <= capacities[index] && take <= remaining {
+    if exhaustive_split_exists(capacities, index + 1, remaining - take, minimum) {
+      return true
+    }
+    take = take + 1
+  }
+  false
+}
+
+///|
+test "split feasibility agrees with exhaustive small-gap allocation" {
+  let mut encoded = 0
+  while encoded < 625 {
+    let capacities : Array[Int32] = []
+    let windows : Array[@deadlineplan.TimeWindow] = []
+    let mut digits = encoded
+    let mut index = 0
+    while index < 4 {
+      let capacity = digits % 5
+      capacities.push(capacity)
+      if capacity > 0 {
+        windows.push(@deadlineplan.window(index * 10, index * 10 + capacity))
+      }
+      digits = digits / 5
+      index = index + 1
+    }
+    let mut minimum = 1
+    while minimum <= 4 {
+      let mut duration = minimum
+      while duration <= 12 {
+        let expected = exhaustive_split_exists(capacities, 0, duration, minimum)
+        match
+          @deadlineplan.schedule(windows, [], [
+            @deadlineplan.splittable_task("work", duration, 40, [], minimum),
+          ]) {
+          Ok(plan) => {
+            let actual = plan.unscheduled.length() == 0
+            assert_eq(actual, expected)
+            if actual {
+              let mut total = 0
+              let mut block_index = 0
+              while block_index < plan.blocks.length() {
+                let block = plan.blocks[block_index].window
+                let mut contained = false
+                let mut window_index = 0
+                while window_index < windows.length() {
+                  if block.start >= windows[window_index].start &&
+                    block.end <= windows[window_index].end {
+                    contained = true
+                  }
+                  window_index = window_index + 1
+                }
+                assert_true(contained)
+                assert_true(block.end - block.start >= minimum)
+                if block_index > 0 {
+                  assert_true(
+                    plan.blocks[block_index - 1].window.end <= block.start,
+                  )
+                }
+                total = total + block.end - block.start
+                block_index = block_index + 1
+              }
+              assert_eq(total, duration)
+            } else {
+              assert_eq(plan.blocks.length(), 0)
+              match plan.unscheduled[0].reason {
+                SplitWorkIncomplete(remaining) => assert_eq(remaining, duration)
+                _ => assert_true(false)
+              }
+            }
+          }
+          Err(_) => assert_true(false)
+        }
+        duration = duration + 1
+      }
+      minimum = minimum + 1
+    }
+    encoded = encoded + 1
   }
 }
