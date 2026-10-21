@@ -1,0 +1,63 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "youyong5/deadlineplan"
+
+// Values
+pub fn fixed_event(String, Int, Int) -> FixedEvent
+
+pub fn schedule(Array[TimeWindow], Array[FixedEvent], Array[Task]) -> Result[Schedule, ValidationError]
+
+pub fn task(String, Int, Int, Array[String]) -> Task
+
+pub fn window(Int, Int) -> TimeWindow
+
+// Errors
+
+// Types and methods
+pub(all) struct FixedEvent {
+  id : String
+  window : TimeWindow
+}
+
+pub(all) struct Schedule {
+  blocks : Array[ScheduledBlock]
+  unscheduled : Array[UnscheduledTask]
+}
+
+pub(all) struct ScheduledBlock {
+  task_id : String
+  window : TimeWindow
+}
+
+pub(all) struct Task {
+  id : String
+  duration_minutes : Int
+  deadline : Int
+  dependencies : Array[String]
+}
+
+pub(all) struct TimeWindow {
+  start : Int
+  end : Int
+}
+
+pub(all) enum UnscheduledReason {
+  NoContinuousSlot
+  DependencyNotScheduled(String)
+}
+
+pub(all) struct UnscheduledTask {
+  task_id : String
+  reason : UnscheduledReason
+}
+
+pub(all) enum ValidationError {
+  InvalidWindow(String, String, Int, Int)
+  InvalidTaskDuration(String, Int)
+  DuplicateTaskId(String)
+  UnknownDependency(String, String)
+  DependencyCycle
+}
+
+// Type aliases
+
+// Traits
