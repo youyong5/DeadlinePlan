@@ -83,8 +83,8 @@ The examples are public-API tests in `tests/scheduling_test.mbt`, `tests/splitta
 - Project replan: confirmed split `design` stays `[0, 10)` and `[20, 30)`. A new vendor call occupies `[30, 45)`, so `build` takes `[45, 60)`; `handoff` waits for both `build` and an approval completed at `65`, then takes `[65, 75)`.
 - Student partial-progress replan: `biology-review` keeps confirmed `[0, 20)` and finishes around two lectures in `[40, 60)` and `[80, 100)`; dependent `exam-setup` is `[100, 110)`.
 - Project partial-progress replan: `design` keeps confirmed `[0, 30)` and adds `[50, 90)` after a vendor call. `release` waits for design and an approval completed at `100`, then takes `[100, 110)`.
-- JSON student file: a completed `topic-announced` record and confirmed 2026-10-21 00:00–01:00 UTC `biology-review` block leave room for `calculus-homework` at 02:30–03:30, review at 03:30–05:00 and 06:30–07:30, and `exam-setup` at 07:30–08:00 UTC.
-- JSON project file: `design` keeps `[0, 30)` and adds `[50, 90)` around a vendor call; with `approval` completed at `100`, `release` is `[100, 110)`.
+- JSON student file: a completed `topic-announced` record and confirmed 2026-10-21 00:00–01:00 UTC `biology-review` block leave room for `calculus-homework` at 02:30–03:30, review at 03:30–05:00 and 06:30–07:30, and `exam-setup` at 07:30–08:00 UTC. The fixed biology exam follows at 08:00–09:00 UTC.
+- JSON project file: on 2026-10-22 UTC, `design` keeps 00:00–00:30 and adds 00:50–01:30 around a vendor call; with `approval` completed at 01:40, `release` is 01:40–01:50.
 
 ## Command-line demo
 
@@ -109,9 +109,33 @@ Scheduled blocks (5):
 Unscheduled tasks (0):
 ```
 
-The project command prints three blocks: confirmed `design` `[1970-01-01T00:00Z, 00:30Z)`, planned `design` `[00:50Z, 01:30Z)`, and `release` `[01:40Z, 01:50Z)`. The `--json` result has `result_version: 1`, `time_unit: "utc_minutes_since_unix_epoch"`, chronological `blocks` with `task_id`, `start`, `end`, and `confirmed`, plus `unscheduled` entries whose `reason.code` and detail fields state the failure. JSON mode writes only one JSON object to stdout. Text mode formats ordinary minutes as UTC dates; minutes outside its safe date formatter are shown as raw `minute N`. No local time zone is inferred.
+The project command prints three blocks: confirmed `design` `[2026-10-22T00:00Z, 00:30Z)`, planned `design` `[00:50Z, 01:30Z)`, and `release` `[01:40Z, 01:50Z)`. The `--json` result has `result_version: 1`, `time_unit: "utc_minutes_since_unix_epoch"`, chronological `blocks` with `task_id`, `start`, `end`, and `confirmed`, plus `unscheduled` entries whose `reason.code` and detail fields state the failure. JSON mode writes only one JSON object to stdout. Text mode formats ordinary minutes as UTC dates; minutes outside its safe date formatter are shown as raw `minute N`. No local time zone is inferred.
 
 `--help` and successful planning exit `0`, including plans with unscheduled tasks; their reasons remain visible in either output mode. File-read, JSON, or input-validation failures exit `1`; invalid or unknown command-line arguments exit `2`. Errors and usage failures go to stderr, leaving stdout empty. The machine-readable result format is separate from the input schema and is versioned independently.
+
+## Local interactive demo
+
+The single-page demo uses the same version 1 JSON example files. From the repository root, with MoonBit and Node.js installed:
+
+```sh
+node demo/build.mjs
+node demo/serve.mjs
+```
+
+Open <http://127.0.0.1:4173> in a browser. The build command runs `moon build --target js demo/bridge`, then copies its JS module, the page, and both JSON examples into `demo/dist/`; the server serves only that local directory. Stop it with Ctrl+C. Re-run the build after changing MoonBit or page source. No account, cloud service, publication, or iCalendar parser is involved.
+
+The initial academic view shows two classes with room labels, a fixed exam, assignments/review, their deadlines, and the five scheduled work blocks (one confirmed). Select **项目交付** to show the 2026-10-22 vendor meeting, design, completed approval, and release using the same widgets and core call. Edit a task's work minutes or deadline, or add/remove a temporary fixed event: every change sends the current plan JSON to MoonBit and updates the timeline and unscheduled reasons immediately. A new event that overlaps a confirmed block gives `ConfirmedOverlapsFixedEvent` instead of moving that block; on invalid input, the error banner is current and the timeline is explicitly the **last valid** schedule. Valid inputs with unscheduled work show `NoContinuousSlot`, `SplitWorkIncomplete`, or `DependencyNotScheduled` as returned by the library. Refreshing or switching scenarios resets local edits.
+
+Display labels, event categories, classrooms, and meeting places live only in `demo/web/app.js`, keyed by task/event ID. `demo/bridge/bridge.mbt` calls the public `parse_plan_json(...)` and `schedule_with_confirmed_blocks(...)`; JavaScript handles editing, local-time display, and rendering only. The plan format still stores Unix UTC integer minutes; the browser converts them to its local timezone when displaying or accepting `datetime-local` values. The [browser screenshot](demo/screenshot.png) shows the initial academic view in Asia/Shanghai time.
+
+To repeat the actual browser checks and refresh the screenshot on Windows with Chrome installed (set `CHROME_BIN` if Chrome is elsewhere):
+
+```sh
+node demo/build.mjs
+node tests/demo-browser-smoke.mjs
+```
+
+That check starts and stops its own local server and headless browser, then verifies both scenes, an edited task, a valid temporary event, a conflicting event, unchanged confirmed blocks, and a browser-captured screenshot.
 
 ## Development
 
@@ -120,5 +144,7 @@ moon fmt
 moon check --deny-warn
 moon test
 moon test --target js # also reads and schedules both JSON example files from disk
+node demo/build.mjs
+node tests/demo-browser-smoke.mjs
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/cli-smoke.ps1
 ```

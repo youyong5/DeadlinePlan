@@ -36,7 +36,7 @@ Write-Output 'PASS student text (exit 0)'
 
 $project = Invoke-PlanCli -CliArgs @('examples/project-plan.v1.json')
 Assert-Check ($project.Code -eq 0 -and $project.Err -eq '') 'project plan must succeed quietly'
-Assert-Check ($project.Out.Contains('Scheduled blocks (3)') -and $project.Out.Contains('confirmed design') -and $project.Out.Contains('planned release')) 'project text output must identify confirmed and planned blocks'
+Assert-Check ($project.Out.Contains('Scheduled blocks (3)') -and $project.Out.Contains('confirmed design') -and $project.Out.Contains('planned release') -and $project.Out.Contains('2026-10-22T01:40Z')) 'project text output must identify confirmed and planned dated blocks'
 Write-Output 'PASS project text (exit 0)'
 
 $machine = Invoke-PlanCli -CliArgs @('--json', 'examples/student-plan.v1.json')

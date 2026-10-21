@@ -1,0 +1,8 @@
+import {
+  "youyong5/deadlineplan" @plan,
+  "moonbitlang/core/json",
+}
+
+supported_targets = "js"
+
+pkgtype(kind: "foreign_library")

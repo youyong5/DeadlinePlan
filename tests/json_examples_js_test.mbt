@@ -65,12 +65,12 @@ test "project JSON file schedules completed approval and partly confirmed design
           match @deadlineplan.parse_plan_json(encoded) {
             Ok(again) => {
               assert_eq(again.fixed_events[0].id, "vendor-call")
-              assert_eq(again.fixed_events[0].window.start, 30)
+              assert_eq(again.fixed_events[0].window.start, 29877150)
               assert_eq(again.tasks[0].id, "design")
               assert_eq(again.tasks[0].minimum_block_minutes, Some(20))
               assert_eq(again.tasks[2].dependencies[1], "approval")
-              assert_eq(again.completed[0].completed_at, 100)
-              assert_eq(again.confirmed_blocks[0].window.end, 30)
+              assert_eq(again.completed[0].completed_at, 29877220)
+              assert_eq(again.confirmed_blocks[0].window.end, 29877150)
             }
             Err(_) => assert_true(false)
           }
@@ -87,14 +87,14 @@ test "project JSON file schedules completed approval and partly confirmed design
         Ok(plan) => {
           assert_eq(plan.blocks.length(), 3)
           assert_eq(plan.blocks[0].task_id, "design")
-          assert_eq(plan.blocks[0].window.start, 0)
-          assert_eq(plan.blocks[0].window.end, 30)
+          assert_eq(plan.blocks[0].window.start, 29877120)
+          assert_eq(plan.blocks[0].window.end, 29877150)
           assert_eq(plan.blocks[1].task_id, "design")
-          assert_eq(plan.blocks[1].window.start, 50)
-          assert_eq(plan.blocks[1].window.end, 90)
+          assert_eq(plan.blocks[1].window.start, 29877170)
+          assert_eq(plan.blocks[1].window.end, 29877210)
           assert_eq(plan.blocks[2].task_id, "release")
-          assert_eq(plan.blocks[2].window.start, 100)
-          assert_eq(plan.blocks[2].window.end, 110)
+          assert_eq(plan.blocks[2].window.start, 29877220)
+          assert_eq(plan.blocks[2].window.end, 29877230)
           assert_eq(plan.unscheduled.length(), 0)
         }
         Err(_) => assert_true(false)

@@ -3,7 +3,8 @@
   "availability": [{ "start": 29875680, "end": 29876220 }],
   "fixed_events": [
     { "id": "morning-lecture", "start": 29875740, "end": 29875830 },
-    { "id": "afternoon-lecture", "start": 29875980, "end": 29876070 }
+    { "id": "afternoon-lecture", "start": 29875980, "end": 29876070 },
+    { "id": "biology-exam", "start": 29876160, "end": 29876220 }
   ],
   "tasks": [
     { "id": "topic-announced", "duration_minutes": 1, "deadline": 29875681, "dependencies": [] },
