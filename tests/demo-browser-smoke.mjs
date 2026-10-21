@@ -13,7 +13,7 @@ const chromePath = process.env.CHROME_BIN ?? (process.platform === 'win32'
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 
 async function eventually(callback, description) {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  for (let attempt = 0; attempt < 300; attempt++) {
     try {
       const value = await callback();
       if (value) return value;
@@ -75,19 +75,28 @@ const server = spawn(process.execPath, ['demo/serve.mjs'], { cwd: root, stdio: '
 let chrome;
 let devtools;
 let profile;
+let chromeStderr = '';
 try {
   await eventually(async () => (await fetch(site)).ok, 'demo server');
   assert.ok(existsSync(chromePath), `Chrome not found: ${chromePath}`);
   profile = mkdtempSync(join(tmpdir(), 'deadlineplan-browser-'));
-  chrome = spawn(chromePath, [
+  const chromeArgs = [
     '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--window-size=1440,1200',
     'about:blank',
-  ], { stdio: 'ignore' });
-  const port = await eventually(() => {
-    const file = join(profile, 'DevToolsActivePort');
-    return existsSync(file) ? readFileSync(file, 'utf8').split('\n')[0] : null;
-  }, 'Chrome DevTools port');
+  ];
+  if (process.platform === 'linux') chromeArgs.unshift('--no-sandbox', '--disable-dev-shm-usage');
+  chrome = spawn(chromePath, chromeArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
+  chrome.stderr.on('data', (chunk) => { chromeStderr = (chromeStderr + chunk.toString()).slice(-4000); });
+  let port;
+  try {
+    port = await eventually(() => {
+      const file = join(profile, 'DevToolsActivePort');
+      return existsSync(file) ? readFileSync(file, 'utf8').split('\n')[0] : null;
+    }, 'Chrome DevTools port');
+  } catch (error) {
+    throw new Error(`${error.message}; Chrome exit=${chrome.exitCode}; stderr=${chromeStderr}`);
+  }
   const targets = await eventually(async () => {
     const response = await fetch(`http://127.0.0.1:${port}/json`);
     const pages = await response.json();
