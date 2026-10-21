@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "availability": [{ "start": 0, "end": 10 }],
+  "fixed_events": [{ "id": "meeting", "start": 5, "end": 10 }],
+  "tasks": [
+    { "id": "too-long", "duration_minutes": 6, "deadline": 10, "dependencies": [] },
+    { "id": "dependent", "duration_minutes": 1, "deadline": 10, "dependencies": ["too-long"] },
+    { "id": "split", "duration_minutes": 8, "deadline": 10, "dependencies": [], "minimum_block_minutes": 3 }
+  ],
+  "completed": [],
+  "confirmed_blocks": []
+}

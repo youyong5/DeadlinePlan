@@ -26,18 +26,19 @@ Every numeric time is a signed 32-bit **integer UTC minute since 1970-01-01T00:0
 ```json
 {
   "schema_version": 1,
-  "availability": [{ "start": 0, "end": 120 }],
+  "availability": [{ "start": 29875680, "end": 29876220 }],
   "fixed_events": [
-    { "id": "lecture-one", "start": 20, "end": 40 },
-    { "id": "lecture-two", "start": 60, "end": 80 }
+    { "id": "morning-lecture", "start": 29875740, "end": 29875830 },
+    { "id": "afternoon-lecture", "start": 29875980, "end": 29876070 }
   ],
   "tasks": [
-    { "id": "assignment-briefing", "duration_minutes": 5, "deadline": 10, "dependencies": [] },
-    { "id": "biology-review", "duration_minutes": 60, "deadline": 100, "dependencies": ["assignment-briefing"], "earliest_start": 0, "minimum_block_minutes": 20 },
-    { "id": "exam-setup", "duration_minutes": 10, "deadline": 120, "dependencies": ["biology-review"] }
+    { "id": "topic-announced", "duration_minutes": 1, "deadline": 29875681, "dependencies": [] },
+    { "id": "calculus-homework", "duration_minutes": 60, "deadline": 29875980, "dependencies": ["topic-announced"], "earliest_start": 29875830 },
+    { "id": "biology-review", "duration_minutes": 210, "deadline": 29876160, "dependencies": ["topic-announced"], "minimum_block_minutes": 60 },
+    { "id": "exam-setup", "duration_minutes": 30, "deadline": 29876220, "dependencies": ["biology-review"] }
   ],
-  "completed": [{ "id": "assignment-briefing", "completed_at": 0 }],
-  "confirmed_blocks": [{ "task_id": "biology-review", "start": 0, "end": 20 }]
+  "completed": [{ "id": "topic-announced", "completed_at": 29875680 }],
+  "confirmed_blocks": [{ "task_id": "biology-review", "start": 29875680, "end": 29875740 }]
 }
 ```
 
@@ -82,8 +83,35 @@ The examples are public-API tests in `tests/scheduling_test.mbt`, `tests/splitta
 - Project replan: confirmed split `design` stays `[0, 10)` and `[20, 30)`. A new vendor call occupies `[30, 45)`, so `build` takes `[45, 60)`; `handoff` waits for both `build` and an approval completed at `65`, then takes `[65, 75)`.
 - Student partial-progress replan: `biology-review` keeps confirmed `[0, 20)` and finishes around two lectures in `[40, 60)` and `[80, 100)`; dependent `exam-setup` is `[100, 110)`.
 - Project partial-progress replan: `design` keeps confirmed `[0, 30)` and adds `[50, 90)` after a vendor call. `release` waits for design and an approval completed at `100`, then takes `[100, 110)`.
-- JSON student file: a completed `assignment-briefing` at `0` enables partially confirmed `biology-review`; its blocks are `[0, 20)` (confirmed), `[40, 60)`, and `[80, 100)`, followed by `exam-setup` at `[100, 110)`.
+- JSON student file: a completed `topic-announced` record and confirmed 2026-10-21 00:00–01:00 UTC `biology-review` block leave room for `calculus-homework` at 02:30–03:30, review at 03:30–05:00 and 06:30–07:30, and `exam-setup` at 07:30–08:00 UTC.
 - JSON project file: `design` keeps `[0, 30)` and adds `[50, 90)` around a vendor call; with `approval` completed at `100`, `release` is `[100, 110)`.
+
+## Command-line demo
+
+The runnable package is `cmd/deadlineplan`. It uses the library's public `parse_plan_json(...)` and `schedule_with_confirmed_blocks(...)`; no JSON schema or scheduling logic is copied into the CLI. It is a JS-target demo using Node's file API and UTC `Date` formatter, so Node.js must be installed. Run these commands from the project root. The `--` passes CLI flags through `moon run`:
+
+```sh
+moon run --target js cmd/deadlineplan -- examples/student-plan.v1.json
+moon run --target js cmd/deadlineplan -- examples/project-plan.v1.json
+moon run --target js cmd/deadlineplan -- --json examples/student-plan.v1.json
+moon run --target js cmd/deadlineplan -- --help
+```
+
+The student command prints:
+
+```text
+Scheduled blocks (5):
+  confirmed biology-review: [2026-10-21T00:00Z, 2026-10-21T01:00Z)
+  planned calculus-homework: [2026-10-21T02:30Z, 2026-10-21T03:30Z)
+  planned biology-review: [2026-10-21T03:30Z, 2026-10-21T05:00Z)
+  planned biology-review: [2026-10-21T06:30Z, 2026-10-21T07:30Z)
+  planned exam-setup: [2026-10-21T07:30Z, 2026-10-21T08:00Z)
+Unscheduled tasks (0):
+```
+
+The project command prints three blocks: confirmed `design` `[1970-01-01T00:00Z, 00:30Z)`, planned `design` `[00:50Z, 01:30Z)`, and `release` `[01:40Z, 01:50Z)`. The `--json` result has `result_version: 1`, `time_unit: "utc_minutes_since_unix_epoch"`, chronological `blocks` with `task_id`, `start`, `end`, and `confirmed`, plus `unscheduled` entries whose `reason.code` and detail fields state the failure. JSON mode writes only one JSON object to stdout. Text mode formats ordinary minutes as UTC dates; minutes outside its safe date formatter are shown as raw `minute N`. No local time zone is inferred.
+
+`--help` and successful planning exit `0`, including plans with unscheduled tasks; their reasons remain visible in either output mode. File-read, JSON, or input-validation failures exit `1`; invalid or unknown command-line arguments exit `2`. Errors and usage failures go to stderr, leaving stdout empty. The machine-readable result format is separate from the input schema and is versioned independently.
 
 ## Development
 
@@ -92,4 +120,5 @@ moon fmt
 moon check --deny-warn
 moon test
 moon test --target js # also reads and schedules both JSON example files from disk
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/cli-smoke.ps1
 ```

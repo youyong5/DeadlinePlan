@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "availability": [{ "start": 0, "end": 10 }],
+  "fixed_events": [],
+  "tasks": [
+    { "id": "work", "duration_minutes": 1, "deadline": 10, "dependencies": ["missing"] }
+  ],
+  "completed": [],
+  "confirmed_blocks": []
+}

@@ -11,12 +11,13 @@ test "student JSON file schedules completed and partly confirmed work" {
         Ok(encoded) =>
           match @deadlineplan.parse_plan_json(encoded) {
             Ok(again) => {
-              assert_eq(again.tasks[0].id, "assignment-briefing")
-              assert_eq(again.tasks[1].id, "biology-review")
-              assert_eq(again.tasks[1].earliest_start, Some(0))
-              assert_eq(again.tasks[1].minimum_block_minutes, Some(20))
-              assert_eq(again.completed[0].completed_at, 0)
-              assert_eq(again.confirmed_blocks[0].window.end, 20)
+              assert_eq(again.tasks[0].id, "topic-announced")
+              assert_eq(again.tasks[1].id, "calculus-homework")
+              assert_eq(again.tasks[1].earliest_start, Some(29875830))
+              assert_eq(again.tasks[2].id, "biology-review")
+              assert_eq(again.tasks[2].minimum_block_minutes, Some(60))
+              assert_eq(again.completed[0].completed_at, 29875680)
+              assert_eq(again.confirmed_blocks[0].window.end, 29875740)
             }
             Err(_) => assert_true(false)
           }
@@ -31,17 +32,20 @@ test "student JSON file schedules completed and partly confirmed work" {
           document.confirmed_blocks,
         ) {
         Ok(plan) => {
-          assert_eq(plan.blocks.length(), 4)
+          assert_eq(plan.blocks.length(), 5)
           assert_eq(plan.blocks[0].task_id, "biology-review")
-          assert_eq(plan.blocks[0].window.start, 0)
-          assert_eq(plan.blocks[0].window.end, 20)
-          assert_eq(plan.blocks[1].window.start, 40)
-          assert_eq(plan.blocks[1].window.end, 60)
-          assert_eq(plan.blocks[2].window.start, 80)
-          assert_eq(plan.blocks[2].window.end, 100)
-          assert_eq(plan.blocks[3].task_id, "exam-setup")
-          assert_eq(plan.blocks[3].window.start, 100)
-          assert_eq(plan.blocks[3].window.end, 110)
+          assert_eq(plan.blocks[0].window.start, 29875680)
+          assert_eq(plan.blocks[0].window.end, 29875740)
+          assert_eq(plan.blocks[1].task_id, "calculus-homework")
+          assert_eq(plan.blocks[1].window.start, 29875830)
+          assert_eq(plan.blocks[1].window.end, 29875890)
+          assert_eq(plan.blocks[2].window.start, 29875890)
+          assert_eq(plan.blocks[2].window.end, 29875980)
+          assert_eq(plan.blocks[3].window.start, 29876070)
+          assert_eq(plan.blocks[3].window.end, 29876130)
+          assert_eq(plan.blocks[4].task_id, "exam-setup")
+          assert_eq(plan.blocks[4].window.start, 29876130)
+          assert_eq(plan.blocks[4].window.end, 29876160)
           assert_eq(plan.unscheduled.length(), 0)
         }
         Err(_) => assert_true(false)
