@@ -19,6 +19,7 @@ pub(all) struct Task {
   duration_minutes : Int32
   deadline : Int32
   dependencies : Array[String]
+  earliest_start : Int32?
 }
 
 ///|
@@ -54,6 +55,7 @@ pub(all) struct Schedule {
 pub(all) enum ValidationError {
   InvalidWindow(String, String, Int32, Int32)
   InvalidTaskDuration(String, Int32)
+  InvalidEarliestStart(String, Int32, Int32)
   DuplicateTaskId(String)
   UnknownDependency(String, String)
   DependencyCycle
@@ -79,7 +81,26 @@ pub fn task(
   deadline : Int32,
   dependencies : Array[String],
 ) -> Task {
-  { id, duration_minutes, deadline, dependencies, }
+  { id, duration_minutes, deadline, dependencies, earliest_start: None, }
+}
+
+///|
+/// Construct a task that cannot begin before `earliest_start`.
+/// Validation happens in `schedule`.
+pub fn task_with_earliest_start(
+  id : String,
+  duration_minutes : Int32,
+  deadline : Int32,
+  dependencies : Array[String],
+  earliest_start : Int32,
+) -> Task {
+  {
+    id,
+    duration_minutes,
+    deadline,
+    dependencies,
+    earliest_start: Some(earliest_start),
+  }
 }
 
 ///|
@@ -134,6 +155,13 @@ fn validate(
     if item.duration_minutes <= 0 {
       return Err(InvalidTaskDuration(item.id, item.duration_minutes))
     }
+    match item.earliest_start {
+      Some(start) =>
+        if start >= item.deadline {
+          return Err(InvalidEarliestStart(item.id, start, item.deadline))
+        }
+      None => ()
+    }
     let mut earlier = 0
     while earlier < index {
       if tasks[earlier].id == item.id {
@@ -173,7 +201,10 @@ fn build_schedule(
     let next = next_ready_task(tasks, status)
     if next != -1 {
       let item = tasks[next]
-      let earliest_start = dependencies_end(item, blocks)
+      let earliest_start = later_limit(
+        item.earliest_start,
+        dependencies_end(item, blocks),
+      )
       match
         find_slot(
           available_windows,
@@ -306,6 +337,16 @@ fn dependencies_end(item : Task, blocks : Array[ScheduledBlock]) -> Int32? {
 }
 
 ///|
+fn later_limit(left : Int32?, right : Int32?) -> Int32? {
+  match (left, right) {
+    (Some(a), Some(b)) => Some(max_int(a, b))
+    (Some(a), None) => Some(a)
+    (None, Some(b)) => Some(b)
+    (None, None) => None
+  }
+}
+
+///|
 fn find_slot(
   availability : Array[TimeWindow],
   fixed_events : Array[FixedEvent],
@@ -322,14 +363,16 @@ fn find_slot(
       Some(start) => max_int(available.start, start)
       None => available.start
     }
-    while candidate.to_int64() + duration.to_int64() <= latest_end.to_int64() {
-      let blocker_end = conflicting_end(
-        candidate, duration, fixed_events, blocks,
-      )
+    let mut candidate_end = candidate.to_int64() + duration.to_int64()
+    while candidate_end <= latest_end.to_int64() {
+      // The bound above makes narrowing safe, including at both Int32 extremes.
+      let end = candidate_end.to_int()
+      let blocker_end = conflicting_end(candidate, end, fixed_events, blocks)
       if blocker_end == candidate {
-        return Some({ start: candidate, end: candidate + duration, })
+        return Some({ start: candidate, end, })
       }
       candidate = blocker_end
+      candidate_end = candidate.to_int64() + duration.to_int64()
     }
     availability_index = availability_index + 1
   }
@@ -339,11 +382,10 @@ fn find_slot(
 ///|
 fn conflicting_end(
   start : Int32,
-  duration : Int32,
+  end : Int32,
   fixed_events : Array[FixedEvent],
   blocks : Array[ScheduledBlock],
 ) -> Int32 {
-  let end = start + duration
   let mut result = start
   let mut index = 0
   while index < fixed_events.length() {

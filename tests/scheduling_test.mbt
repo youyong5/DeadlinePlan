@@ -5,7 +5,7 @@ test "student coursework uses the public scheduling API" {
     [@deadlineplan.window(0, 180)],
     [@deadlineplan.fixed_event("lecture", 60, 90)],
     [
-      @deadlineplan.task("math-homework", 45, 120, []),
+      @deadlineplan.task_with_earliest_start("math-homework", 45, 120, [], 15),
       @deadlineplan.task("history-essay", 60, 180, ["math-homework"]),
       @deadlineplan.task("biology-exam-review", 40, 140, []),
     ],
@@ -14,8 +14,8 @@ test "student coursework uses the public scheduling API" {
     Ok(schedule) => {
       assert_eq(schedule.blocks.length(), 2)
       assert_eq(schedule.blocks[0].task_id, "math-homework")
-      assert_eq(schedule.blocks[0].window.start, 0)
-      assert_eq(schedule.blocks[0].window.end, 45)
+      assert_eq(schedule.blocks[0].window.start, 15)
+      assert_eq(schedule.blocks[0].window.end, 60)
       assert_eq(schedule.blocks[1].task_id, "biology-exam-review")
       assert_eq(schedule.blocks[1].window.start, 90)
       assert_eq(schedule.blocks[1].window.end, 130)
@@ -35,7 +35,13 @@ test "project delivery data uses the same public scheduling API" {
     [
       @deadlineplan.task("draft", 90, 160, []),
       @deadlineplan.task("review", 30, 220, ["draft"]),
-      @deadlineplan.task("release-package", 60, 300, ["review"]),
+      @deadlineplan.task_with_earliest_start(
+        "release-package",
+        60,
+        300,
+        ["review"],
+        170,
+      ),
     ],
   )
   match result {
@@ -45,8 +51,8 @@ test "project delivery data uses the same public scheduling API" {
       assert_eq(schedule.blocks[0].window.end, 90)
       assert_eq(schedule.blocks[1].window.start, 90)
       assert_eq(schedule.blocks[1].window.end, 120)
-      assert_eq(schedule.blocks[2].window.start, 150)
-      assert_eq(schedule.blocks[2].window.end, 210)
+      assert_eq(schedule.blocks[2].window.start, 170)
+      assert_eq(schedule.blocks[2].window.end, 230)
       assert_eq(schedule.unscheduled.length(), 0)
     }
     Err(_) => assert_true(false)

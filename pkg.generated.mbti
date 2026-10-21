@@ -8,6 +8,8 @@ pub fn schedule(Array[TimeWindow], Array[FixedEvent], Array[Task]) -> Result[Sch
 
 pub fn task(String, Int, Int, Array[String]) -> Task
 
+pub fn task_with_earliest_start(String, Int, Int, Array[String], Int) -> Task
+
 pub fn window(Int, Int) -> TimeWindow
 
 // Errors
@@ -33,6 +35,7 @@ pub(all) struct Task {
   duration_minutes : Int
   deadline : Int
   dependencies : Array[String]
+  earliest_start : Int?
 }
 
 pub(all) struct TimeWindow {
@@ -53,6 +56,7 @@ pub(all) struct UnscheduledTask {
 pub(all) enum ValidationError {
   InvalidWindow(String, String, Int, Int)
   InvalidTaskDuration(String, Int)
+  InvalidEarliestStart(String, Int, Int)
   DuplicateTaskId(String)
   UnknownDependency(String, String)
   DependencyCycle
