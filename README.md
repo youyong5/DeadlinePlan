@@ -169,7 +169,7 @@ node tests/demo-browser-smoke.mjs
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/cli-smoke.ps1
 ```
 
-GitHub Actions runs these checks in a clean Ubuntu environment, installs MoonBit and Node.js, builds the JS bridge, and verifies the CLI and both browser scenarios in headless Chrome. The browser test can use `CHROME_BIN` to select Chrome and `DEADLINEPLAN_SCREENSHOT=0` to avoid rewriting the checked-in screenshot.
+GitHub Actions runs these checks in a clean Ubuntu environment, installs MoonBit and Node.js, builds the JS bridge, and verifies the CLI and both browser scenarios in headless Chrome. CI pins MoonBit compiler/core `0.10.15+943464bfa` (moon `0.1.20261012`), the toolchain that generated the checked-in `.mbti` interfaces; MoonBit's interface text changed under later toolchains. The browser test can use `CHROME_BIN` to select Chrome and `DEADLINEPLAN_SCREENSHOT=0` to avoid rewriting the checked-in screenshot.
 
 ## Packaging and release scope
 
