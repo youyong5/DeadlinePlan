@@ -2,23 +2,29 @@
 /// Public-API examples: this test package imports the publishable module path.
 test "student coursework uses the public scheduling API" {
   let result = @deadlineplan.schedule(
-    [@deadlineplan.window(0, 180)],
-    [@deadlineplan.fixed_event("lecture", 60, 90)],
+    [@deadlineplan.window(0, 200)],
+    [
+      @deadlineplan.fixed_event("first-lecture", 60, 90),
+      @deadlineplan.fixed_event("second-lecture", 120, 150),
+    ],
     [
       @deadlineplan.task_with_earliest_start("math-homework", 45, 120, [], 15),
-      @deadlineplan.task("history-essay", 60, 180, ["math-homework"]),
-      @deadlineplan.task("biology-exam-review", 40, 140, []),
+      @deadlineplan.task("history-essay", 60, 200, ["math-homework"]),
+      @deadlineplan.splittable_task("biology-exam-review", 60, 180, [], 20),
     ],
   )
   match result {
     Ok(schedule) => {
-      assert_eq(schedule.blocks.length(), 2)
+      assert_eq(schedule.blocks.length(), 3)
       assert_eq(schedule.blocks[0].task_id, "math-homework")
       assert_eq(schedule.blocks[0].window.start, 15)
       assert_eq(schedule.blocks[0].window.end, 60)
       assert_eq(schedule.blocks[1].task_id, "biology-exam-review")
       assert_eq(schedule.blocks[1].window.start, 90)
-      assert_eq(schedule.blocks[1].window.end, 130)
+      assert_eq(schedule.blocks[1].window.end, 120)
+      assert_eq(schedule.blocks[2].task_id, "biology-exam-review")
+      assert_eq(schedule.blocks[2].window.start, 150)
+      assert_eq(schedule.blocks[2].window.end, 180)
       assert_eq(schedule.unscheduled.length(), 1)
       assert_eq(schedule.unscheduled[0].task_id, "history-essay")
       assert_true(schedule.unscheduled[0].reason is NoContinuousSlot)

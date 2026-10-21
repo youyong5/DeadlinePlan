@@ -6,6 +6,10 @@ pub fn fixed_event(String, Int, Int) -> FixedEvent
 
 pub fn schedule(Array[TimeWindow], Array[FixedEvent], Array[Task]) -> Result[Schedule, ValidationError]
 
+pub fn splittable_task(String, Int, Int, Array[String], Int) -> Task
+
+pub fn splittable_task_with_earliest_start(String, Int, Int, Array[String], Int, Int) -> Task
+
 pub fn task(String, Int, Int, Array[String]) -> Task
 
 pub fn task_with_earliest_start(String, Int, Int, Array[String], Int) -> Task
@@ -36,6 +40,7 @@ pub(all) struct Task {
   deadline : Int
   dependencies : Array[String]
   earliest_start : Int?
+  minimum_block_minutes : Int?
 }
 
 pub(all) struct TimeWindow {
@@ -45,6 +50,7 @@ pub(all) struct TimeWindow {
 
 pub(all) enum UnscheduledReason {
   NoContinuousSlot
+  SplitWorkIncomplete(Int)
   DependencyNotScheduled(String)
 }
 
@@ -57,6 +63,7 @@ pub(all) enum ValidationError {
   InvalidWindow(String, String, Int, Int)
   InvalidTaskDuration(String, Int)
   InvalidEarliestStart(String, Int, Int)
+  InvalidMinimumBlock(String, Int, Int)
   DuplicateTaskId(String)
   UnknownDependency(String, String)
   DependencyCycle

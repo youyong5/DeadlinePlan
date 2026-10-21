@@ -20,6 +20,7 @@ pub(all) struct Task {
   deadline : Int32
   dependencies : Array[String]
   earliest_start : Int32?
+  minimum_block_minutes : Int32?
 }
 
 ///|
@@ -33,6 +34,7 @@ pub(all) struct ScheduledBlock {
 /// Why a task could not be put on the greedy schedule.
 pub(all) enum UnscheduledReason {
   NoContinuousSlot
+  SplitWorkIncomplete(Int32)
   DependencyNotScheduled(String)
 }
 
@@ -56,6 +58,7 @@ pub(all) enum ValidationError {
   InvalidWindow(String, String, Int32, Int32)
   InvalidTaskDuration(String, Int32)
   InvalidEarliestStart(String, Int32, Int32)
+  InvalidMinimumBlock(String, Int32, Int32)
   DuplicateTaskId(String)
   UnknownDependency(String, String)
   DependencyCycle
@@ -81,7 +84,14 @@ pub fn task(
   deadline : Int32,
   dependencies : Array[String],
 ) -> Task {
-  { id, duration_minutes, deadline, dependencies, earliest_start: None, }
+  {
+    id,
+    duration_minutes,
+    deadline,
+    dependencies,
+    earliest_start: None,
+    minimum_block_minutes: None,
+  }
 }
 
 ///|
@@ -100,6 +110,48 @@ pub fn task_with_earliest_start(
     deadline,
     dependencies,
     earliest_start: Some(earliest_start),
+    minimum_block_minutes: None,
+  }
+}
+
+///|
+/// Construct a task whose work may be split into blocks of at least
+/// `minimum_block_minutes`. Validation happens in `schedule`.
+pub fn splittable_task(
+  id : String,
+  duration_minutes : Int32,
+  deadline : Int32,
+  dependencies : Array[String],
+  minimum_block_minutes : Int32,
+) -> Task {
+  {
+    id,
+    duration_minutes,
+    deadline,
+    dependencies,
+    earliest_start: None,
+    minimum_block_minutes: Some(minimum_block_minutes),
+  }
+}
+
+///|
+/// Construct a splittable task that cannot start before `earliest_start`.
+/// Validation happens in `schedule`.
+pub fn splittable_task_with_earliest_start(
+  id : String,
+  duration_minutes : Int32,
+  deadline : Int32,
+  dependencies : Array[String],
+  earliest_start : Int32,
+  minimum_block_minutes : Int32,
+) -> Task {
+  {
+    id,
+    duration_minutes,
+    deadline,
+    dependencies,
+    earliest_start: Some(earliest_start),
+    minimum_block_minutes: Some(minimum_block_minutes),
   }
 }
 
@@ -107,7 +159,7 @@ pub fn task_with_earliest_start(
 /// Schedule tasks greedily by deadline once their dependencies are complete.
 ///
 /// Ties are resolved by the input order. Each selected task is placed in the
-/// earliest continuous feasible window. A returned `Ok` may still contain
+/// earliest feasible time blocks. A returned `Ok` may still contain
 /// unscheduled tasks; input validation failures are returned as `Err`.
 pub fn schedule(
   availability : Array[TimeWindow],
@@ -162,6 +214,15 @@ fn validate(
         }
       None => ()
     }
+    match item.minimum_block_minutes {
+      Some(minimum) =>
+        if minimum <= 0 || minimum > item.duration_minutes {
+          return Err(
+            InvalidMinimumBlock(item.id, minimum, item.duration_minutes),
+          )
+        }
+      None => ()
+    }
     let mut earlier = 0
     while earlier < index {
       if tasks[earlier].id == item.id {
@@ -206,20 +267,17 @@ fn build_schedule(
         dependencies_end(item, blocks),
       )
       match
-        find_slot(
-          available_windows,
-          fixed_events,
-          blocks,
-          earliest_start,
-          item.duration_minutes,
-          item.deadline,
-        ) {
-        Some(work_window) => {
-          blocks.push({ task_id: item.id, window: work_window, })
+        plan_task(item, available_windows, fixed_events, blocks, earliest_start) {
+        Ok(work_windows) => {
+          let mut block_index = 0
+          while block_index < work_windows.length() {
+            blocks.push({ task_id: item.id, window: work_windows[block_index], })
+            block_index = block_index + 1
+          }
           status[next] = 1
         }
-        None => {
-          unscheduled.push({ task_id: item.id, reason: NoContinuousSlot, })
+        Err(reason) => {
+          unscheduled.push({ task_id: item.id, reason, })
           status[next] = 2
         }
       }
@@ -237,6 +295,41 @@ fn build_schedule(
     }
   }
   { blocks, unscheduled, }
+}
+
+///|
+fn plan_task(
+  item : Task,
+  availability : Array[TimeWindow],
+  fixed_events : Array[FixedEvent],
+  blocks : Array[ScheduledBlock],
+  earliest_start : Int32?,
+) -> Result[Array[TimeWindow], UnscheduledReason] {
+  match item.minimum_block_minutes {
+    None =>
+      match
+        find_slot(
+          availability,
+          fixed_events,
+          blocks,
+          earliest_start,
+          item.duration_minutes,
+          item.deadline,
+        ) {
+        Some(work_window) => Ok([work_window])
+        None => Err(NoContinuousSlot)
+      }
+    Some(minimum) =>
+      find_split_blocks(
+        availability,
+        fixed_events,
+        blocks,
+        earliest_start,
+        item.duration_minutes,
+        minimum,
+        item.deadline,
+      )
+  }
 }
 
 ///|
@@ -321,17 +414,16 @@ fn first_unfinished_dependency(
 ///|
 fn dependencies_end(item : Task, blocks : Array[ScheduledBlock]) -> Int32? {
   let mut result : Int32? = None
-  let mut index = 0
-  while index < item.dependencies.length() {
-    let block = block_for_task(blocks, item.dependencies[index])
-    match result {
-      Some(previous) =>
-        if block.window.end > previous {
-          result = Some(block.window.end)
-        }
-      None => result = Some(block.window.end)
+  let mut dependency_index = 0
+  while dependency_index < item.dependencies.length() {
+    let mut block_index = 0
+    while block_index < blocks.length() {
+      if blocks[block_index].task_id == item.dependencies[dependency_index] {
+        result = later_limit(result, Some(blocks[block_index].window.end))
+      }
+      block_index = block_index + 1
     }
-    index = index + 1
+    dependency_index = dependency_index + 1
   }
   result
 }
@@ -377,6 +469,100 @@ fn find_slot(
     availability_index = availability_index + 1
   }
   None
+}
+
+///|
+fn find_split_blocks(
+  availability : Array[TimeWindow],
+  fixed_events : Array[FixedEvent],
+  blocks : Array[ScheduledBlock],
+  earliest_start : Int32?,
+  duration : Int32,
+  minimum : Int32,
+  deadline : Int32,
+) -> Result[Array[TimeWindow], UnscheduledReason] {
+  let gaps = free_intervals(
+    availability, fixed_events, blocks, earliest_start, deadline,
+  )
+  let proposed : Array[TimeWindow] = []
+  let mut remaining = duration
+  let mut index = 0
+  while index < gaps.length() && remaining > 0 {
+    let gap = gaps[index]
+    let capacity = gap.end.to_int64() - gap.start.to_int64()
+    let remaining_long = remaining.to_int64()
+    let minimum_long = minimum.to_int64()
+    let mut take = 0L
+    if capacity >= remaining_long {
+      take = remaining_long
+    } else if remaining_long >= minimum_long + minimum_long {
+      // Reserve a full minimum-sized final block. If this would make the
+      // current block too short, skip this gap instead of creating a short tail.
+      take = min_long(capacity, remaining_long - minimum_long)
+      if take < minimum_long {
+        take = 0L
+      }
+    }
+    if take > 0L {
+      let end = (gap.start.to_int64() + take).to_int()
+      proposed.push({ start: gap.start, end, })
+      remaining = remaining - take.to_int()
+    }
+    index = index + 1
+  }
+  if remaining == 0 {
+    Ok(proposed)
+  } else {
+    Err(SplitWorkIncomplete(remaining))
+  }
+}
+
+///|
+fn free_intervals(
+  availability : Array[TimeWindow],
+  fixed_events : Array[FixedEvent],
+  blocks : Array[ScheduledBlock],
+  earliest_start : Int32?,
+  deadline : Int32,
+) -> Array[TimeWindow] {
+  let occupied : Array[TimeWindow] = []
+  let mut index = 0
+  while index < fixed_events.length() {
+    occupied.push(fixed_events[index].window)
+    index = index + 1
+  }
+  index = 0
+  while index < blocks.length() {
+    occupied.push(blocks[index].window)
+    index = index + 1
+  }
+  let merged_occupied = normalize_availability(occupied)
+  let gaps : Array[TimeWindow] = []
+  let mut available_index = 0
+  while available_index < availability.length() {
+    let available = availability[available_index]
+    let mut cursor = match earliest_start {
+      Some(start) => max_int(available.start, start)
+      None => available.start
+    }
+    let limit = min_int(available.end, deadline)
+    let mut occupied_index = 0
+    while occupied_index < merged_occupied.length() && cursor < limit {
+      let blocker = merged_occupied[occupied_index]
+      if blocker.start < limit && blocker.end > cursor {
+        if blocker.start > cursor {
+          gaps.push({ start: cursor, end: blocker.start, })
+        }
+        cursor = max_int(cursor, blocker.end)
+      }
+      occupied_index = occupied_index + 1
+    }
+    if cursor < limit {
+      gaps.push({ start: cursor, end: limit, })
+    }
+    available_index = available_index + 1
+  }
+  gaps
 }
 
 ///|
@@ -460,21 +646,6 @@ fn task_index(tasks : Array[Task], id : String) -> Int32 {
 }
 
 ///|
-fn block_for_task(
-  blocks : Array[ScheduledBlock],
-  task_id : String,
-) -> ScheduledBlock {
-  let mut index = 0
-  while index < blocks.length() {
-    if blocks[index].task_id == task_id {
-      return blocks[index]
-    }
-    index = index + 1
-  }
-  { task_id, window: { start: 0, end: 0, }, }
-}
-
-///|
 fn first_pending_task(status : Array[Int32]) -> Int32 {
   let mut index = 0
   while index < status.length() {
@@ -488,6 +659,15 @@ fn first_pending_task(status : Array[Int32]) -> Int32 {
 
 ///|
 fn min_int(left : Int32, right : Int32) -> Int32 {
+  if left < right {
+    left
+  } else {
+    right
+  }
+}
+
+///|
+fn min_long(left : Int64, right : Int64) -> Int64 {
   if left < right {
     left
   } else {
