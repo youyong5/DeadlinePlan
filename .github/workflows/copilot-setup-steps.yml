@@ -38,3 +38,4 @@ jobs:
         run: |
           moon version --all
           moon update
+          moon check --deny-warn

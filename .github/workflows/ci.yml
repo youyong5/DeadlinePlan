@@ -70,3 +70,6 @@ jobs:
           CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
           DEADLINEPLAN_SCREENSHOT: '0'
         run: node tests/demo-browser-smoke.mjs
+
+      - name: Ensure checks left the checkout clean
+        run: test -z "$(git status --porcelain)"
