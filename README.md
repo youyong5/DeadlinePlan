@@ -16,6 +16,34 @@ All times are signed 32-bit integer UTC minutes relative to the Unix epoch. Nega
 - `schedule(availability, fixed_events, tasks)` validates the input and returns `Result[Schedule, ValidationError]`.
 - `schedule_with_completed(availability, fixed_events, tasks, completed)` also accepts an array of completion records. The original `schedule(...)` is equivalent to passing an empty array.
 - `schedule_with_confirmed_blocks(availability, fixed_events, tasks, completed, confirmed_blocks)` keeps `ScheduledBlock` values in place while replanning other tasks and the unconfirmed remainder of splittable tasks.
+- `parse_plan_json(source)` parses a versioned plan document, checks field shape and then calls `schedule_with_confirmed_blocks(...)` for input validation. It returns `Result[PlanDocument, PlanJsonError]`.
+- `serialize_plan_json(document)` validates a document through the same entry and returns `Result[String, PlanJsonError]`. Array order is preserved.
+
+## JSON plan format (schema version 1)
+
+Every numeric time is a signed 32-bit **integer UTC minute since 1970-01-01T00:00:00Z**; intervals are `[start, end)`. This is a complete example (also present as `examples/student-plan.v1.json`):
+
+```json
+{
+  "schema_version": 1,
+  "availability": [{ "start": 0, "end": 120 }],
+  "fixed_events": [
+    { "id": "lecture-one", "start": 20, "end": 40 },
+    { "id": "lecture-two", "start": 60, "end": 80 }
+  ],
+  "tasks": [
+    { "id": "assignment-briefing", "duration_minutes": 5, "deadline": 10, "dependencies": [] },
+    { "id": "biology-review", "duration_minutes": 60, "deadline": 100, "dependencies": ["assignment-briefing"], "earliest_start": 0, "minimum_block_minutes": 20 },
+    { "id": "exam-setup", "duration_minutes": 10, "deadline": 120, "dependencies": ["biology-review"] }
+  ],
+  "completed": [{ "id": "assignment-briefing", "completed_at": 0 }],
+  "confirmed_blocks": [{ "task_id": "biology-review", "start": 0, "end": 20 }]
+}
+```
+
+All six top-level fields are required. `fixed_events`, `completed`, and `confirmed_blocks` may be empty arrays. Every task needs `id`, `duration_minutes`, `deadline`, and `dependencies`; `earliest_start` and `minimum_block_minutes` may be absent or `null`. A missing minimum means a continuous task; a positive minimum means splittable work. `0` is an actual minute, never an unset marker. An application can attach display names and locations to IDs outside this scheduling document.
+
+Version 1 readers accept only `schema_version: 1`; a missing, mistyped, old, or future version is not guessed or migrated. `PlanJsonError` distinguishes `JsonSyntax(message)`, `MissingField(path)`, `WrongType(path, expected)`, `UnexpectedField(path)`, `UnsupportedSchemaVersion(version)`, and `InvalidPlanInput(path, ValidationError)`. Paths are JSON Pointers such as `/tasks/1/dependencies/0` (the root is `""`). Syntax messages come from the MoonBit JSON parser and include its position when available. Scheduler validation remains the single source of truth for dependencies, durations, time windows, completed records, and confirmed blocks. Unknown object fields are rejected, rather than silently dropped during a round trip; keep application-only display data outside this format. Parsed record-array order is preserved on serialization, including task order, which breaks equal-deadline ties. A version 1 writer should preserve this order and must not reinterpret minutes as local time or seconds.
 
 `task(...)` leaves `Task.earliest_start` and `Task.minimum_block_minutes` as `None`: the task must occupy one continuous block. The earliest-start constructor sets `earliest_start` to `Some(minute)`. The splittable constructors set `minimum_block_minutes` to `Some(minutes)`. Minute `0` is an ordinary UTC minute, not an unset marker. All constructors produce tasks for the same `schedule(...)` call.
 
@@ -54,6 +82,8 @@ The examples are public-API tests in `tests/scheduling_test.mbt`, `tests/splitta
 - Project replan: confirmed split `design` stays `[0, 10)` and `[20, 30)`. A new vendor call occupies `[30, 45)`, so `build` takes `[45, 60)`; `handoff` waits for both `build` and an approval completed at `65`, then takes `[65, 75)`.
 - Student partial-progress replan: `biology-review` keeps confirmed `[0, 20)` and finishes around two lectures in `[40, 60)` and `[80, 100)`; dependent `exam-setup` is `[100, 110)`.
 - Project partial-progress replan: `design` keeps confirmed `[0, 30)` and adds `[50, 90)` after a vendor call. `release` waits for design and an approval completed at `100`, then takes `[100, 110)`.
+- JSON student file: a completed `assignment-briefing` at `0` enables partially confirmed `biology-review`; its blocks are `[0, 20)` (confirmed), `[40, 60)`, and `[80, 100)`, followed by `exam-setup` at `[100, 110)`.
+- JSON project file: `design` keeps `[0, 30)` and adds `[50, 90)` around a vendor call; with `approval` completed at `100`, `release` is `[100, 110)`.
 
 ## Development
 
@@ -61,4 +91,5 @@ The examples are public-API tests in `tests/scheduling_test.mbt`, `tests/splitta
 moon fmt
 moon check --deny-warn
 moon test
+moon test --target js # also reads and schedules both JSON example files from disk
 ```

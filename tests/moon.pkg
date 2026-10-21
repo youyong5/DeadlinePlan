@@ -1,3 +1,7 @@
 import {
   "youyong5/deadlineplan",
 } for "test"
+
+options(
+  targets: { "json_examples_js_test.mbt": [ "js" ] },
+)

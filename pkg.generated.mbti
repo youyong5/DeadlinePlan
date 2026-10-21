@@ -6,11 +6,15 @@ pub fn completed_task(String, Int) -> CompletedTask
 
 pub fn fixed_event(String, Int, Int) -> FixedEvent
 
+pub fn parse_plan_json(String) -> Result[PlanDocument, PlanJsonError]
+
 pub fn schedule(Array[TimeWindow], Array[FixedEvent], Array[Task]) -> Result[Schedule, ValidationError]
 
 pub fn schedule_with_completed(Array[TimeWindow], Array[FixedEvent], Array[Task], Array[CompletedTask]) -> Result[Schedule, ValidationError]
 
 pub fn schedule_with_confirmed_blocks(Array[TimeWindow], Array[FixedEvent], Array[Task], Array[CompletedTask], Array[ScheduledBlock]) -> Result[Schedule, ValidationError]
+
+pub fn serialize_plan_json(PlanDocument) -> Result[String, PlanJsonError]
 
 pub fn splittable_task(String, Int, Int, Array[String], Int) -> Task
 
@@ -23,6 +27,14 @@ pub fn task_with_earliest_start(String, Int, Int, Array[String], Int) -> Task
 pub fn window(Int, Int) -> TimeWindow
 
 // Errors
+pub(all) suberror PlanJsonError {
+  JsonSyntax(String)
+  MissingField(String)
+  WrongType(String, String)
+  UnexpectedField(String)
+  UnsupportedSchemaVersion(Int)
+  InvalidPlanInput(String, ValidationError)
+}
 
 // Types and methods
 pub(all) struct CompletedTask {
@@ -33,6 +45,15 @@ pub(all) struct CompletedTask {
 pub(all) struct FixedEvent {
   id : String
   window : TimeWindow
+}
+
+pub(all) struct PlanDocument {
+  schema_version : Int
+  availability : Array[TimeWindow]
+  fixed_events : Array[FixedEvent]
+  tasks : Array[Task]
+  completed : Array[CompletedTask]
+  confirmed_blocks : Array[ScheduledBlock]
 }
 
 pub(all) struct Schedule {

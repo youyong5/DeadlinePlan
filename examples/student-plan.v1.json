@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "availability": [{ "start": 0, "end": 120 }],
+  "fixed_events": [
+    { "id": "lecture-one", "start": 20, "end": 40 },
+    { "id": "lecture-two", "start": 60, "end": 80 }
+  ],
+  "tasks": [
+    { "id": "assignment-briefing", "duration_minutes": 5, "deadline": 10, "dependencies": [] },
+    { "id": "biology-review", "duration_minutes": 60, "deadline": 100, "dependencies": ["assignment-briefing"], "earliest_start": 0, "minimum_block_minutes": 20 },
+    { "id": "exam-setup", "duration_minutes": 10, "deadline": 120, "dependencies": ["biology-review"] }
+  ],
+  "completed": [{ "id": "assignment-briefing", "completed_at": 0 }],
+  "confirmed_blocks": [{ "task_id": "biology-review", "start": 0, "end": 20 }]
+}

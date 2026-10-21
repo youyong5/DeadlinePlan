@@ -1,0 +1,101 @@
+///|
+#module("node:fs")
+extern "js" fn read_example(path : String, encoding : String) -> String = "readFileSync"
+
+///|
+test "student JSON file schedules completed and partly confirmed work" {
+  let source = read_example("examples/student-plan.v1.json", "utf8")
+  match @deadlineplan.parse_plan_json(source) {
+    Ok(document) => {
+      match @deadlineplan.serialize_plan_json(document) {
+        Ok(encoded) =>
+          match @deadlineplan.parse_plan_json(encoded) {
+            Ok(again) => {
+              assert_eq(again.tasks[0].id, "assignment-briefing")
+              assert_eq(again.tasks[1].id, "biology-review")
+              assert_eq(again.tasks[1].earliest_start, Some(0))
+              assert_eq(again.tasks[1].minimum_block_minutes, Some(20))
+              assert_eq(again.completed[0].completed_at, 0)
+              assert_eq(again.confirmed_blocks[0].window.end, 20)
+            }
+            Err(_) => assert_true(false)
+          }
+        Err(_) => assert_true(false)
+      }
+      match
+        @deadlineplan.schedule_with_confirmed_blocks(
+          document.availability,
+          document.fixed_events,
+          document.tasks,
+          document.completed,
+          document.confirmed_blocks,
+        ) {
+        Ok(plan) => {
+          assert_eq(plan.blocks.length(), 4)
+          assert_eq(plan.blocks[0].task_id, "biology-review")
+          assert_eq(plan.blocks[0].window.start, 0)
+          assert_eq(plan.blocks[0].window.end, 20)
+          assert_eq(plan.blocks[1].window.start, 40)
+          assert_eq(plan.blocks[1].window.end, 60)
+          assert_eq(plan.blocks[2].window.start, 80)
+          assert_eq(plan.blocks[2].window.end, 100)
+          assert_eq(plan.blocks[3].task_id, "exam-setup")
+          assert_eq(plan.blocks[3].window.start, 100)
+          assert_eq(plan.blocks[3].window.end, 110)
+          assert_eq(plan.unscheduled.length(), 0)
+        }
+        Err(_) => assert_true(false)
+      }
+    }
+    Err(_) => assert_true(false)
+  }
+}
+
+///|
+test "project JSON file schedules completed approval and partly confirmed design" {
+  let source = read_example("examples/project-plan.v1.json", "utf8")
+  match @deadlineplan.parse_plan_json(source) {
+    Ok(document) => {
+      match @deadlineplan.serialize_plan_json(document) {
+        Ok(encoded) =>
+          match @deadlineplan.parse_plan_json(encoded) {
+            Ok(again) => {
+              assert_eq(again.fixed_events[0].id, "vendor-call")
+              assert_eq(again.fixed_events[0].window.start, 30)
+              assert_eq(again.tasks[0].id, "design")
+              assert_eq(again.tasks[0].minimum_block_minutes, Some(20))
+              assert_eq(again.tasks[2].dependencies[1], "approval")
+              assert_eq(again.completed[0].completed_at, 100)
+              assert_eq(again.confirmed_blocks[0].window.end, 30)
+            }
+            Err(_) => assert_true(false)
+          }
+        Err(_) => assert_true(false)
+      }
+      match
+        @deadlineplan.schedule_with_confirmed_blocks(
+          document.availability,
+          document.fixed_events,
+          document.tasks,
+          document.completed,
+          document.confirmed_blocks,
+        ) {
+        Ok(plan) => {
+          assert_eq(plan.blocks.length(), 3)
+          assert_eq(plan.blocks[0].task_id, "design")
+          assert_eq(plan.blocks[0].window.start, 0)
+          assert_eq(plan.blocks[0].window.end, 30)
+          assert_eq(plan.blocks[1].task_id, "design")
+          assert_eq(plan.blocks[1].window.start, 50)
+          assert_eq(plan.blocks[1].window.end, 90)
+          assert_eq(plan.blocks[2].task_id, "release")
+          assert_eq(plan.blocks[2].window.start, 100)
+          assert_eq(plan.blocks[2].window.end, 110)
+          assert_eq(plan.unscheduled.length(), 0)
+        }
+        Err(_) => assert_true(false)
+      }
+    }
+    Err(_) => assert_true(false)
+  }
+}
