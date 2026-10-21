@@ -215,7 +215,7 @@ pub fn schedule_with_completed(
 }
 
 ///|
-/// Replan unconfirmed tasks while retaining fully confirmed task blocks.
+/// Replan remaining work while retaining confirmed task blocks.
 /// Completed tasks have actual completion minutes and reserve no work time.
 pub fn schedule_with_confirmed_blocks(
   availability : Array[TimeWindow],
@@ -459,7 +459,11 @@ fn validate_confirmed(
       if item.minimum_block_minutes is None && count != 1 {
         return Err(InvalidConfirmedBlockCount(item.id, count))
       }
-      if total != item.duration_minutes.to_int64() {
+      if total > item.duration_minutes.to_int64() ||
+        (
+          item.minimum_block_minutes is None &&
+          total != item.duration_minutes.to_int64()
+        ) {
         return Err(
           ConfirmedDurationMismatch(item.id, total, item.duration_minutes),
         )
@@ -468,7 +472,7 @@ fn validate_confirmed(
         Some(start) =>
           match
             validate_prior_dependencies(
-              item, start, completed, confirmed_blocks,
+              item, start, tasks, completed, confirmed_blocks,
             ) {
             Err(error) => return Err(error)
             Ok(_) => ()
@@ -486,6 +490,7 @@ fn validate_confirmed(
       validate_prior_dependencies(
         item,
         record.completed_at,
+        tasks,
         completed,
         confirmed_blocks,
       ) {
@@ -506,12 +511,26 @@ fn windows_overlap(left : TimeWindow, right : TimeWindow) -> Bool {
 fn validate_prior_dependencies(
   item : Task,
   actual_time : Int32,
+  tasks : Array[Task],
   completed : Array[CompletedTask],
   confirmed_blocks : Array[ScheduledBlock],
 ) -> Result[Unit, ValidationError] {
   let mut dependency_index = 0
   while dependency_index < item.dependencies.length() {
     let dependency = item.dependencies[dependency_index]
+    let mut is_completed = false
+    let mut completed_index = 0
+    while completed_index < completed.length() {
+      if completed[completed_index].id == dependency {
+        is_completed = true
+      }
+      completed_index = completed_index + 1
+    }
+    if !is_completed &&
+      confirmed_minutes(dependency, confirmed_blocks) !=
+      tasks[task_index(tasks, dependency)].duration_minutes.to_int64() {
+      return Err(UnresolvedPriorDependency(item.id, dependency))
+    }
     match recorded_finish(dependency, completed, confirmed_blocks) {
       None => return Err(UnresolvedPriorDependency(item.id, dependency))
       Some(finished_at) =>
@@ -529,6 +548,24 @@ fn validate_prior_dependencies(
     dependency_index = dependency_index + 1
   }
   Ok(())
+}
+
+///|
+fn confirmed_minutes(
+  task_id : String,
+  confirmed_blocks : Array[ScheduledBlock],
+) -> Int64 {
+  let mut total = 0L
+  let mut index = 0
+  while index < confirmed_blocks.length() {
+    let block = confirmed_blocks[index]
+    if block.task_id == task_id {
+      let length = block.window.end.to_int64() - block.window.start.to_int64()
+      total = total + length
+    }
+    index = index + 1
+  }
+  total
 }
 
 ///|
@@ -580,12 +617,16 @@ fn build_schedule(
   while confirmed_index < confirmed_blocks.length() {
     let block = confirmed_blocks[confirmed_index]
     blocks.push(block)
-    let task_position = task_index(tasks, block.task_id)
-    if status[task_position] == 0 {
+    confirmed_index = confirmed_index + 1
+  }
+  let mut task_position = 0
+  while task_position < tasks.length() {
+    if confirmed_minutes(tasks[task_position].id, confirmed_blocks) ==
+      tasks[task_position].duration_minutes.to_int64() {
       status[task_position] = 1
       handled = handled + 1
     }
-    confirmed_index = confirmed_index + 1
+    task_position = task_position + 1
   }
   while handled < tasks.length() {
     let next = next_ready_task(tasks, status)
@@ -595,8 +636,18 @@ fn build_schedule(
         item.earliest_start,
         dependencies_end(item, blocks, completed),
       )
+      let confirmed_work = confirmed_minutes(item.id, confirmed_blocks)
+      let remaining_work = (item.duration_minutes.to_int64() - confirmed_work).to_int()
       match
-        plan_task(item, available_windows, fixed_events, blocks, earliest_start) {
+        plan_task(
+          item,
+          available_windows,
+          fixed_events,
+          blocks,
+          earliest_start,
+          remaining_work,
+          confirmed_work > 0L,
+        ) {
         Ok(work_windows) => {
           let mut block_index = 0
           while block_index < work_windows.length() {
@@ -633,6 +684,8 @@ fn plan_task(
   fixed_events : Array[FixedEvent],
   blocks : Array[ScheduledBlock],
   earliest_start : Int32?,
+  remaining_work : Int32,
+  has_confirmed_work : Bool,
 ) -> Result[Array[TimeWindow], UnscheduledReason] {
   match item.minimum_block_minutes {
     None =>
@@ -642,7 +695,7 @@ fn plan_task(
           fixed_events,
           blocks,
           earliest_start,
-          item.duration_minutes,
+          remaining_work,
           item.deadline,
         ) {
         Some(work_window) => Ok([work_window])
@@ -654,9 +707,10 @@ fn plan_task(
         fixed_events,
         blocks,
         earliest_start,
-        item.duration_minutes,
+        remaining_work,
         minimum,
         item.deadline,
+        has_confirmed_work,
       )
   }
 }
@@ -810,6 +864,7 @@ fn find_split_blocks(
   duration : Int32,
   minimum : Int32,
   deadline : Int32,
+  allow_short_final : Bool,
 ) -> Result[Array[TimeWindow], UnscheduledReason] {
   let gaps = free_intervals(
     availability, fixed_events, blocks, earliest_start, deadline,
@@ -819,7 +874,8 @@ fn find_split_blocks(
   let mut index = 0
   while index < gaps.length() && remaining > 0 {
     let gap = gaps[index]
-    match earliest_feasible_take(gaps, index, remaining, minimum) {
+    match
+      earliest_feasible_take(gaps, index, remaining, minimum, allow_short_final) {
       Some(take) => {
         // The selected amount fits this gap, so narrowing to Int32 is safe.
         let end = (gap.start.to_int64() + take.to_int64()).to_int()
@@ -833,23 +889,30 @@ fn find_split_blocks(
   if remaining == 0 {
     Ok(proposed)
   } else {
-    // No tentative block is committed; all of this task's work is still open.
+    // No tentative block is committed; the pre-existing confirmation remains.
     Err(SplitWorkIncomplete(duration))
   }
 }
 
 ///|
-/// Find the largest amount for this gap that leaves a feasible allocation in
-/// later gaps. A suffix using k gaps can hold every integer amount from
-/// k * minimum through the sum of its k largest capacities.
+/// Find the largest regular block for this gap that leaves a feasible suffix.
+/// With confirmed progress, the suffix may end in one short final block.
 fn earliest_feasible_take(
   gaps : Array[TimeWindow],
   index : Int32,
   remaining : Int32,
   minimum : Int32,
+  allow_short_final : Bool,
 ) -> Int32? {
   let capacity = gaps[index].end.to_int64() - gaps[index].start.to_int64()
   let minimum_long = minimum.to_int64()
+  let remaining_long = remaining.to_int64()
+  if allow_short_final && remaining_long < minimum_long {
+    if capacity >= remaining_long {
+      return Some(remaining)
+    }
+    return None
+  }
   if capacity < minimum_long {
     return None
   }
@@ -857,23 +920,20 @@ fn earliest_feasible_take(
   let mut next = index + 1
   while next < gaps.length() {
     let future = gaps[next].end.to_int64() - gaps[next].start.to_int64()
-    if future >= minimum_long {
-      future_capacities.push(future)
-    }
+    future_capacities.push(future)
     next = next + 1
   }
   future_capacities.sort_by_key(value => value)
-  let remaining_long = remaining.to_int64()
   let mut suffix_capacity = 0L
   let mut suffix_count = 0
   let mut best = 0L
-  while suffix_count <= future_capacities.length() &&
+  let mut searching = true
+  while searching &&
+        suffix_count <= future_capacities.length() &&
         suffix_count.to_int64() * minimum_long <= remaining_long {
+    let minimum_regular = suffix_count.to_int64() * minimum_long
     let lower = max_long(minimum_long, remaining_long - suffix_capacity)
-    let upper = min_long(
-      capacity,
-      remaining_long - suffix_count.to_int64() * minimum_long,
-    )
+    let upper = min_long(capacity, remaining_long - minimum_regular)
     if lower <= upper && upper > best {
       best = upper
     }
@@ -881,7 +941,29 @@ fn earliest_feasible_take(
       let largest = future_capacities[future_capacities.length() -
         1 -
         suffix_count]
-      suffix_capacity = min_long(remaining_long, suffix_capacity + largest)
+      if allow_short_final && minimum_long > 1L {
+        let short_capacity = min_long(minimum_long - 1L, largest)
+        let maximum_suffix = min_long(
+          remaining_long,
+          suffix_capacity + short_capacity,
+        )
+        let lower_with_short = max_long(
+          minimum_long,
+          remaining_long - maximum_suffix,
+        )
+        let upper_with_short = min_long(
+          capacity,
+          remaining_long - minimum_regular - 1L,
+        )
+        if lower_with_short <= upper_with_short && upper_with_short > best {
+          best = upper_with_short
+        }
+      }
+      if largest >= minimum_long {
+        suffix_capacity = min_long(remaining_long, suffix_capacity + largest)
+      } else {
+        searching = false
+      }
     }
     suffix_count = suffix_count + 1
   }

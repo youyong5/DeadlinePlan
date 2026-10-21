@@ -246,7 +246,7 @@ test "confirmed block identity and time bounds are validated" {
 }
 
 ///|
-test "confirmed work must be whole and split blocks must each meet minimum" {
+test "continuous confirmations must be whole and split blocks must meet minimum" {
   let availability = [@deadlineplan.window(0, 50)]
   assert_true(
     @deadlineplan.schedule_with_confirmed_blocks(
@@ -278,16 +278,24 @@ test "confirmed work must be whole and split blocks must each meet minimum" {
     )
     is Err(ConfirmedBlockTooShort("split", 7L, 8)),
   )
-  assert_true(
+  match
     @deadlineplan.schedule_with_confirmed_blocks(
       availability,
       [],
       [@deadlineplan.splittable_task("split", 20, 50, [], 8)],
       [],
       [confirmed("split", 0, 10)],
-    )
-    is Err(ConfirmedDurationMismatch("split", 10L, 20)),
-  )
+    ) {
+    Ok(plan) => {
+      assert_eq(plan.blocks.length(), 2)
+      assert_eq(plan.blocks[0].window.start, 0)
+      assert_eq(plan.blocks[0].window.end, 10)
+      assert_eq(plan.blocks[1].window.start, 10)
+      assert_eq(plan.blocks[1].window.end, 20)
+      assert_eq(plan.unscheduled.length(), 0)
+    }
+    Err(_) => assert_true(false)
+  }
   assert_true(
     @deadlineplan.schedule_with_confirmed_blocks(
       availability,
