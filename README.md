@@ -1,5 +1,7 @@
 # deadlineplan
 
+[![CI](https://github.com/youyong5/DeadlinePlan/actions/workflows/ci.yml/badge.svg)](https://github.com/youyong5/DeadlinePlan/actions/workflows/ci.yml)
+
 `youyong5/deadlineplan` is a small, reusable MoonBit library for planning deadline-bound tasks. It deliberately models generic work rather than a particular domain: a student timetable and a software delivery plan can use the same API.
 
 The **MoonBit scheduling library is the primary deliverable**. The CLI and interactive academic/project page are application examples; no `Course`, `Homework`, or `Exam` type is part of the core API.
