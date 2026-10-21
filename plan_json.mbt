@@ -368,11 +368,9 @@ fn validation_json_path(
 }
 
 ///|
-fn validate_plan_document(
-  document : PlanDocument,
-) -> Result[Unit, PlanJsonError] {
+fn validate_plan_document(document : PlanDocument) -> Unit raise PlanJsonError {
   if document.schema_version != 1 {
-    return Err(UnsupportedSchemaVersion(document.schema_version))
+    raise UnsupportedSchemaVersion(document.schema_version)
   }
   match
     schedule_with_confirmed_blocks(
@@ -382,33 +380,36 @@ fn validate_plan_document(
       document.completed,
       document.confirmed_blocks,
     ) {
-    Ok(_) => Ok(())
+    Ok(_) => ()
     Err(error) =>
-      Err(InvalidPlanInput(validation_json_path(document, error), error))
+      raise InvalidPlanInput(validation_json_path(document, error), error)
   }
 }
 
 ///|
 /// Parse version 1 JSON and validate it with the existing replanning entry.
+/// The Result shape is a stable public API; callers inspect parse failures as data.
+#warnings("-result_error_return")
 pub fn parse_plan_json(source : String) -> Result[PlanDocument, PlanJsonError] {
   let value = @json.parse(source) catch {
     error => return Err(JsonSyntax(error.to_string()))
   }
   let document = decode_plan(value) catch { error => return Err(error) }
-  match validate_plan_document(document) {
-    Ok(_) => Ok(document)
-    Err(error) => Err(error)
+  validate_plan_document(document) catch {
+    error => return Err(error)
   }
+  Ok(document)
 }
 
 ///|
 /// Emit a canonical version 1 JSON document after scheduler validation.
+/// The Result shape is kept for compatibility with existing callers.
+#warnings("-result_error_return")
 pub fn serialize_plan_json(
   document : PlanDocument,
 ) -> Result[String, PlanJsonError] {
-  match validate_plan_document(document) {
-    Err(error) => return Err(error)
-    Ok(_) => ()
+  validate_plan_document(document) catch {
+    error => return Err(error)
   }
   let availability : Array[Json] = []
   for item in document.availability {
