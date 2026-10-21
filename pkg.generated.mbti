@@ -2,9 +2,13 @@
 package "youyong5/deadlineplan"
 
 // Values
+pub fn completed_task(String, Int) -> CompletedTask
+
 pub fn fixed_event(String, Int, Int) -> FixedEvent
 
 pub fn schedule(Array[TimeWindow], Array[FixedEvent], Array[Task]) -> Result[Schedule, ValidationError]
+
+pub fn schedule_with_completed(Array[TimeWindow], Array[FixedEvent], Array[Task], Array[CompletedTask]) -> Result[Schedule, ValidationError]
 
 pub fn splittable_task(String, Int, Int, Array[String], Int) -> Task
 
@@ -19,6 +23,11 @@ pub fn window(Int, Int) -> TimeWindow
 // Errors
 
 // Types and methods
+pub(all) struct CompletedTask {
+  id : String
+  completed_at : Int
+}
+
 pub(all) struct FixedEvent {
   id : String
   window : TimeWindow
@@ -67,6 +76,8 @@ pub(all) enum ValidationError {
   DuplicateTaskId(String)
   UnknownDependency(String, String)
   DependencyCycle
+  UnknownCompletedTaskId(String)
+  DuplicateCompletedTaskId(String)
 }
 
 // Type aliases

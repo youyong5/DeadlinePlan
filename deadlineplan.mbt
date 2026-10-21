@@ -24,6 +24,13 @@ pub(all) struct Task {
 }
 
 ///|
+/// A task already finished outside this scheduling run.
+pub(all) struct CompletedTask {
+  id : String
+  completed_at : Int32
+}
+
+///|
 /// A continuous interval reserved for a task by the scheduler.
 pub(all) struct ScheduledBlock {
   task_id : String
@@ -62,6 +69,8 @@ pub(all) enum ValidationError {
   DuplicateTaskId(String)
   UnknownDependency(String, String)
   DependencyCycle
+  UnknownCompletedTaskId(String)
+  DuplicateCompletedTaskId(String)
 }
 
 ///|
@@ -156,6 +165,13 @@ pub fn splittable_task_with_earliest_start(
 }
 
 ///|
+/// Record the actual completion minute of a task in the task list.
+/// Validation happens in `schedule_with_completed`.
+pub fn completed_task(id : String, completed_at : Int32) -> CompletedTask {
+  { id, completed_at, }
+}
+
+///|
 /// Schedule tasks greedily by deadline once their dependencies are complete.
 ///
 /// Ties are resolved by the input order. Each selected task is placed in the
@@ -166,9 +182,21 @@ pub fn schedule(
   fixed_events : Array[FixedEvent],
   tasks : Array[Task],
 ) -> Result[Schedule, ValidationError] {
-  match validate(availability, fixed_events, tasks) {
+  schedule_with_completed(availability, fixed_events, tasks, [])
+}
+
+///|
+/// Like `schedule`, but pre-completed tasks are not scheduled again. Their
+/// actual completion minutes still constrain their dependents.
+pub fn schedule_with_completed(
+  availability : Array[TimeWindow],
+  fixed_events : Array[FixedEvent],
+  tasks : Array[Task],
+  completed : Array[CompletedTask],
+) -> Result[Schedule, ValidationError] {
+  match validate(availability, fixed_events, tasks, completed) {
     Err(error) => Err(error)
-    Ok(_) => Ok(build_schedule(availability, fixed_events, tasks))
+    Ok(_) => Ok(build_schedule(availability, fixed_events, tasks, completed))
   }
 }
 
@@ -177,6 +205,7 @@ fn validate(
   availability : Array[TimeWindow],
   fixed_events : Array[FixedEvent],
   tasks : Array[Task],
+  completed : Array[CompletedTask],
 ) -> Result[Unit, ValidationError] {
   let mut index = 0
   while index < availability.length() {
@@ -241,10 +270,24 @@ fn validate(
     index = index + 1
   }
   if has_dependency_cycle(tasks) {
-    Err(DependencyCycle)
-  } else {
-    Ok(())
+    return Err(DependencyCycle)
   }
+  index = 0
+  while index < completed.length() {
+    let record = completed[index]
+    if task_index(tasks, record.id) == -1 {
+      return Err(UnknownCompletedTaskId(record.id))
+    }
+    let mut earlier = 0
+    while earlier < index {
+      if completed[earlier].id == record.id {
+        return Err(DuplicateCompletedTaskId(record.id))
+      }
+      earlier = earlier + 1
+    }
+    index = index + 1
+  }
+  Ok(())
 }
 
 ///|
@@ -252,19 +295,26 @@ fn build_schedule(
   availability : Array[TimeWindow],
   fixed_events : Array[FixedEvent],
   tasks : Array[Task],
+  completed : Array[CompletedTask],
 ) -> Schedule {
   let available_windows = normalize_availability(availability)
   let status = Array::make(tasks.length(), 0)
   let blocks : Array[ScheduledBlock] = []
   let unscheduled : Array[UnscheduledTask] = []
   let mut handled = 0
+  let mut completed_index = 0
+  while completed_index < completed.length() {
+    status[task_index(tasks, completed[completed_index].id)] = 1
+    handled = handled + 1
+    completed_index = completed_index + 1
+  }
   while handled < tasks.length() {
     let next = next_ready_task(tasks, status)
     if next != -1 {
       let item = tasks[next]
       let earliest_start = later_limit(
         item.earliest_start,
-        dependencies_end(item, blocks),
+        dependencies_end(item, blocks, completed),
       )
       match
         plan_task(item, available_windows, fixed_events, blocks, earliest_start) {
@@ -412,10 +462,24 @@ fn first_unfinished_dependency(
 }
 
 ///|
-fn dependencies_end(item : Task, blocks : Array[ScheduledBlock]) -> Int32? {
+fn dependencies_end(
+  item : Task,
+  blocks : Array[ScheduledBlock],
+  completed : Array[CompletedTask],
+) -> Int32? {
   let mut result : Int32? = None
   let mut dependency_index = 0
   while dependency_index < item.dependencies.length() {
+    let mut completed_index = 0
+    while completed_index < completed.length() {
+      if completed[completed_index].id == item.dependencies[dependency_index] {
+        result = later_limit(
+          result,
+          Some(completed[completed_index].completed_at),
+        )
+      }
+      completed_index = completed_index + 1
+    }
     let mut block_index = 0
     while block_index < blocks.length() {
       if blocks[block_index].task_id == item.dependencies[dependency_index] {
