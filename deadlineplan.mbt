@@ -164,6 +164,7 @@ fn build_schedule(
   fixed_events : Array[FixedEvent],
   tasks : Array[Task],
 ) -> Schedule {
+  let available_windows = normalize_availability(availability)
   let status = Array::make(tasks.length(), 0)
   let blocks : Array[ScheduledBlock] = []
   let unscheduled : Array[UnscheduledTask] = []
@@ -175,7 +176,7 @@ fn build_schedule(
       let earliest_start = dependencies_end(item, blocks)
       match
         find_slot(
-          availability,
+          available_windows,
           fixed_events,
           blocks,
           earliest_start,
@@ -205,6 +206,35 @@ fn build_schedule(
     }
   }
   { blocks, unscheduled, }
+}
+
+///|
+fn normalize_availability(
+  availability : Array[TimeWindow],
+) -> Array[TimeWindow] {
+  let sorted : Array[TimeWindow] = []
+  let mut index = 0
+  while index < availability.length() {
+    sorted.push(availability[index])
+    index = index + 1
+  }
+  sorted.sort_by_key(item => item.start)
+  let merged : Array[TimeWindow] = []
+  index = 0
+  while index < sorted.length() {
+    let current = sorted[index]
+    if merged.length() > 0 && current.start <= merged[merged.length() - 1].end {
+      let last = merged.length() - 1
+      merged[last] = {
+        start: merged[last].start,
+        end: max_int(merged[last].end, current.end),
+      }
+    } else {
+      merged.push(current)
+    }
+    index = index + 1
+  }
+  merged
 }
 
 ///|
@@ -258,13 +288,17 @@ fn first_unfinished_dependency(
 }
 
 ///|
-fn dependencies_end(item : Task, blocks : Array[ScheduledBlock]) -> Int32 {
-  let mut result = 0
+fn dependencies_end(item : Task, blocks : Array[ScheduledBlock]) -> Int32? {
+  let mut result : Int32? = None
   let mut index = 0
   while index < item.dependencies.length() {
     let block = block_for_task(blocks, item.dependencies[index])
-    if block.window.end > result {
-      result = block.window.end
+    match result {
+      Some(previous) =>
+        if block.window.end > previous {
+          result = Some(block.window.end)
+        }
+      None => result = Some(block.window.end)
     }
     index = index + 1
   }
@@ -276,7 +310,7 @@ fn find_slot(
   availability : Array[TimeWindow],
   fixed_events : Array[FixedEvent],
   blocks : Array[ScheduledBlock],
-  earliest_start : Int32,
+  earliest_start : Int32?,
   duration : Int32,
   deadline : Int32,
 ) -> TimeWindow? {
@@ -284,8 +318,11 @@ fn find_slot(
   while availability_index < availability.length() {
     let available = availability[availability_index]
     let latest_end = min_int(available.end, deadline)
-    let mut candidate = max_int(available.start, earliest_start)
-    while duration <= latest_end - candidate {
+    let mut candidate = match earliest_start {
+      Some(start) => max_int(available.start, start)
+      None => available.start
+    }
+    while candidate.to_int64() + duration.to_int64() <= latest_end.to_int64() {
       let blocker_end = conflicting_end(
         candidate, duration, fixed_events, blocks,
       )
