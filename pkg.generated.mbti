@@ -10,6 +10,8 @@ pub fn schedule(Array[TimeWindow], Array[FixedEvent], Array[Task]) -> Result[Sch
 
 pub fn schedule_with_completed(Array[TimeWindow], Array[FixedEvent], Array[Task], Array[CompletedTask]) -> Result[Schedule, ValidationError]
 
+pub fn schedule_with_confirmed_blocks(Array[TimeWindow], Array[FixedEvent], Array[Task], Array[CompletedTask], Array[ScheduledBlock]) -> Result[Schedule, ValidationError]
+
 pub fn splittable_task(String, Int, Int, Array[String], Int) -> Task
 
 pub fn splittable_task_with_earliest_start(String, Int, Int, Array[String], Int, Int) -> Task
@@ -78,6 +80,19 @@ pub(all) enum ValidationError {
   DependencyCycle
   UnknownCompletedTaskId(String)
   DuplicateCompletedTaskId(String)
+  UnknownConfirmedTaskId(String)
+  CompletedAndConfirmedTaskId(String)
+  InvalidConfirmedWindow(String, Int, Int)
+  ConfirmedOutsideAvailability(String, Int, Int)
+  ConfirmedBeforeEarliestStart(String, Int, Int)
+  ConfirmedAfterDeadline(String, Int, Int)
+  ConfirmedBlockTooShort(String, Int64, Int)
+  InvalidConfirmedBlockCount(String, Int)
+  ConfirmedDurationMismatch(String, Int64, Int)
+  ConfirmedOverlapsFixedEvent(String, String)
+  ConfirmedBlocksOverlap(String, String)
+  UnresolvedPriorDependency(String, String)
+  PriorDependencyFinishesLate(String, String, Int, Int)
 }
 
 // Type aliases

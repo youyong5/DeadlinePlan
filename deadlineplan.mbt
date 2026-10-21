@@ -71,6 +71,19 @@ pub(all) enum ValidationError {
   DependencyCycle
   UnknownCompletedTaskId(String)
   DuplicateCompletedTaskId(String)
+  UnknownConfirmedTaskId(String)
+  CompletedAndConfirmedTaskId(String)
+  InvalidConfirmedWindow(String, Int32, Int32)
+  ConfirmedOutsideAvailability(String, Int32, Int32)
+  ConfirmedBeforeEarliestStart(String, Int32, Int32)
+  ConfirmedAfterDeadline(String, Int32, Int32)
+  ConfirmedBlockTooShort(String, Int64, Int32)
+  InvalidConfirmedBlockCount(String, Int32)
+  ConfirmedDurationMismatch(String, Int64, Int32)
+  ConfirmedOverlapsFixedEvent(String, String)
+  ConfirmedBlocksOverlap(String, String)
+  UnresolvedPriorDependency(String, String)
+  PriorDependencyFinishesLate(String, String, Int32, Int32)
 }
 
 ///|
@@ -196,7 +209,36 @@ pub fn schedule_with_completed(
 ) -> Result[Schedule, ValidationError] {
   match validate(availability, fixed_events, tasks, completed) {
     Err(error) => Err(error)
-    Ok(_) => Ok(build_schedule(availability, fixed_events, tasks, completed))
+    Ok(_) =>
+      Ok(build_schedule(availability, fixed_events, tasks, completed, []))
+  }
+}
+
+///|
+/// Replan unconfirmed tasks while retaining fully confirmed task blocks.
+/// Completed tasks have actual completion minutes and reserve no work time.
+pub fn schedule_with_confirmed_blocks(
+  availability : Array[TimeWindow],
+  fixed_events : Array[FixedEvent],
+  tasks : Array[Task],
+  completed : Array[CompletedTask],
+  confirmed_blocks : Array[ScheduledBlock],
+) -> Result[Schedule, ValidationError] {
+  match validate(availability, fixed_events, tasks, completed) {
+    Err(error) => Err(error)
+    Ok(_) =>
+      match
+        validate_confirmed(
+          availability, fixed_events, tasks, completed, confirmed_blocks,
+        ) {
+        Err(error) => Err(error)
+        Ok(_) =>
+          Ok(
+            build_schedule(
+              availability, fixed_events, tasks, completed, confirmed_blocks,
+            ),
+          )
+      }
   }
 }
 
@@ -291,11 +333,237 @@ fn validate(
 }
 
 ///|
+fn validate_confirmed(
+  availability : Array[TimeWindow],
+  fixed_events : Array[FixedEvent],
+  tasks : Array[Task],
+  completed : Array[CompletedTask],
+  confirmed_blocks : Array[ScheduledBlock],
+) -> Result[Unit, ValidationError] {
+  let available = normalize_availability(availability)
+  let mut index = 0
+  while index < confirmed_blocks.length() {
+    let block = confirmed_blocks[index]
+    let task_position = task_index(tasks, block.task_id)
+    if task_position == -1 {
+      return Err(UnknownConfirmedTaskId(block.task_id))
+    }
+    let mut completed_index = 0
+    while completed_index < completed.length() {
+      if completed[completed_index].id == block.task_id {
+        return Err(CompletedAndConfirmedTaskId(block.task_id))
+      }
+      completed_index = completed_index + 1
+    }
+    if block.window.start >= block.window.end {
+      return Err(
+        InvalidConfirmedWindow(
+          block.task_id,
+          block.window.start,
+          block.window.end,
+        ),
+      )
+    }
+    let item = tasks[task_position]
+    match item.earliest_start {
+      Some(start) =>
+        if block.window.start < start {
+          return Err(
+            ConfirmedBeforeEarliestStart(
+              block.task_id,
+              block.window.start,
+              start,
+            ),
+          )
+        }
+      None => ()
+    }
+    if block.window.end > item.deadline {
+      return Err(
+        ConfirmedAfterDeadline(block.task_id, block.window.end, item.deadline),
+      )
+    }
+    let length = block.window.end.to_int64() - block.window.start.to_int64()
+    match item.minimum_block_minutes {
+      Some(minimum) =>
+        if length < minimum.to_int64() {
+          return Err(ConfirmedBlockTooShort(block.task_id, length, minimum))
+        }
+      None => ()
+    }
+    let mut covered = false
+    let mut available_index = 0
+    while available_index < available.length() {
+      if block.window.start >= available[available_index].start &&
+        block.window.end <= available[available_index].end {
+        covered = true
+      }
+      available_index = available_index + 1
+    }
+    if !covered {
+      return Err(
+        ConfirmedOutsideAvailability(
+          block.task_id,
+          block.window.start,
+          block.window.end,
+        ),
+      )
+    }
+    let mut event_index = 0
+    while event_index < fixed_events.length() {
+      if windows_overlap(block.window, fixed_events[event_index].window) {
+        return Err(
+          ConfirmedOverlapsFixedEvent(
+            block.task_id,
+            fixed_events[event_index].id,
+          ),
+        )
+      }
+      event_index = event_index + 1
+    }
+    let mut earlier = 0
+    while earlier < index {
+      if windows_overlap(block.window, confirmed_blocks[earlier].window) {
+        return Err(
+          ConfirmedBlocksOverlap(
+            block.task_id,
+            confirmed_blocks[earlier].task_id,
+          ),
+        )
+      }
+      earlier = earlier + 1
+    }
+    index = index + 1
+  }
+  index = 0
+  while index < tasks.length() {
+    let item = tasks[index]
+    let mut count = 0
+    let mut total = 0L
+    let mut first_start : Int32? = None
+    let mut block_index = 0
+    while block_index < confirmed_blocks.length() {
+      let block = confirmed_blocks[block_index]
+      if block.task_id == item.id {
+        count = count + 1
+        let length = block.window.end.to_int64() - block.window.start.to_int64()
+        total = total + length
+        first_start = match first_start {
+          Some(start) => Some(min_int(start, block.window.start))
+          None => Some(block.window.start)
+        }
+      }
+      block_index = block_index + 1
+    }
+    if count > 0 {
+      if item.minimum_block_minutes is None && count != 1 {
+        return Err(InvalidConfirmedBlockCount(item.id, count))
+      }
+      if total != item.duration_minutes.to_int64() {
+        return Err(
+          ConfirmedDurationMismatch(item.id, total, item.duration_minutes),
+        )
+      }
+      match first_start {
+        Some(start) =>
+          match
+            validate_prior_dependencies(
+              item, start, completed, confirmed_blocks,
+            ) {
+            Err(error) => return Err(error)
+            Ok(_) => ()
+          }
+        None => ()
+      }
+    }
+    index = index + 1
+  }
+  index = 0
+  while index < completed.length() {
+    let record = completed[index]
+    let item = tasks[task_index(tasks, record.id)]
+    match
+      validate_prior_dependencies(
+        item,
+        record.completed_at,
+        completed,
+        confirmed_blocks,
+      ) {
+      Err(error) => return Err(error)
+      Ok(_) => ()
+    }
+    index = index + 1
+  }
+  Ok(())
+}
+
+///|
+fn windows_overlap(left : TimeWindow, right : TimeWindow) -> Bool {
+  left.start < right.end && right.start < left.end
+}
+
+///|
+fn validate_prior_dependencies(
+  item : Task,
+  actual_time : Int32,
+  completed : Array[CompletedTask],
+  confirmed_blocks : Array[ScheduledBlock],
+) -> Result[Unit, ValidationError] {
+  let mut dependency_index = 0
+  while dependency_index < item.dependencies.length() {
+    let dependency = item.dependencies[dependency_index]
+    match recorded_finish(dependency, completed, confirmed_blocks) {
+      None => return Err(UnresolvedPriorDependency(item.id, dependency))
+      Some(finished_at) =>
+        if finished_at > actual_time {
+          return Err(
+            PriorDependencyFinishesLate(
+              item.id,
+              dependency,
+              finished_at,
+              actual_time,
+            ),
+          )
+        }
+    }
+    dependency_index = dependency_index + 1
+  }
+  Ok(())
+}
+
+///|
+/// Return an actual completion minute or the last end among task blocks.
+/// `blocks` may be only confirmed blocks or the full schedule built so far.
+fn recorded_finish(
+  task_id : String,
+  completed : Array[CompletedTask],
+  confirmed_blocks : Array[ScheduledBlock],
+) -> Int32? {
+  let mut result : Int32? = None
+  let mut index = 0
+  while index < completed.length() {
+    if completed[index].id == task_id {
+      result = later_limit(result, Some(completed[index].completed_at))
+    }
+    index = index + 1
+  }
+  index = 0
+  while index < confirmed_blocks.length() {
+    if confirmed_blocks[index].task_id == task_id {
+      result = later_limit(result, Some(confirmed_blocks[index].window.end))
+    }
+    index = index + 1
+  }
+  result
+}
+
+///|
 fn build_schedule(
   availability : Array[TimeWindow],
   fixed_events : Array[FixedEvent],
   tasks : Array[Task],
   completed : Array[CompletedTask],
+  confirmed_blocks : Array[ScheduledBlock],
 ) -> Schedule {
   let available_windows = normalize_availability(availability)
   let status = Array::make(tasks.length(), 0)
@@ -307,6 +575,17 @@ fn build_schedule(
     status[task_index(tasks, completed[completed_index].id)] = 1
     handled = handled + 1
     completed_index = completed_index + 1
+  }
+  let mut confirmed_index = 0
+  while confirmed_index < confirmed_blocks.length() {
+    let block = confirmed_blocks[confirmed_index]
+    blocks.push(block)
+    let task_position = task_index(tasks, block.task_id)
+    if status[task_position] == 0 {
+      status[task_position] = 1
+      handled = handled + 1
+    }
+    confirmed_index = confirmed_index + 1
   }
   while handled < tasks.length() {
     let next = next_ready_task(tasks, status)
@@ -470,23 +749,10 @@ fn dependencies_end(
   let mut result : Int32? = None
   let mut dependency_index = 0
   while dependency_index < item.dependencies.length() {
-    let mut completed_index = 0
-    while completed_index < completed.length() {
-      if completed[completed_index].id == item.dependencies[dependency_index] {
-        result = later_limit(
-          result,
-          Some(completed[completed_index].completed_at),
-        )
-      }
-      completed_index = completed_index + 1
-    }
-    let mut block_index = 0
-    while block_index < blocks.length() {
-      if blocks[block_index].task_id == item.dependencies[dependency_index] {
-        result = later_limit(result, Some(blocks[block_index].window.end))
-      }
-      block_index = block_index + 1
-    }
+    result = later_limit(
+      result,
+      recorded_finish(item.dependencies[dependency_index], completed, blocks),
+    )
     dependency_index = dependency_index + 1
   }
   result

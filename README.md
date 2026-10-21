@@ -15,6 +15,7 @@ All times are signed 32-bit integer UTC minutes relative to the Unix epoch. Nega
 - `completed_task(id, completed_at)` records a task's actual completion minute.
 - `schedule(availability, fixed_events, tasks)` validates the input and returns `Result[Schedule, ValidationError]`.
 - `schedule_with_completed(availability, fixed_events, tasks, completed)` also accepts an array of completion records. The original `schedule(...)` is equivalent to passing an empty array.
+- `schedule_with_confirmed_blocks(availability, fixed_events, tasks, completed, confirmed_blocks)` keeps fully confirmed `ScheduledBlock` values in place while replanning other tasks.
 
 `task(...)` leaves `Task.earliest_start` and `Task.minimum_block_minutes` as `None`: the task must occupy one continuous block. The earliest-start constructor sets `earliest_start` to `Some(minute)`. The splittable constructors set `minimum_block_minutes` to `Some(minutes)`. Minute `0` is an ordinary UTC minute, not an unset marker. All constructors produce tasks for the same `schedule(...)` call.
 
@@ -22,7 +23,13 @@ All times are signed 32-bit integer UTC minutes relative to the Unix epoch. Nega
 
 `Schedule.unscheduled` records `NoContinuousSlot` for a continuous task without a slot, `SplitWorkIncomplete(remaining_minutes)` for a splittable task that cannot fit in the free time available at its turn, or `DependencyNotScheduled(dependency_id)` for a blocked successor. A completed prerequisite whose time falls at or after a successor's deadline is **scheduled**, not missing: the successor receives `NoContinuousSlot` or `SplitWorkIncomplete` as appropriate. A failed split task leaves no blocks or reservations behind, so `remaining_minutes` is its **entire duration**, not a partially placed deficit.
 
+The replanning entry accepts only **whole confirmed tasks** in this phase. A continuous task must have exactly one confirmed block; a splittable task may have several, each at least its minimum block length, with lengths summing exactly to its total duration. Partial confirmations are rejected, not filled in. Confirmed blocks are returned first in their input order at their original times; newly scheduled blocks follow in decision order. They reserve time but are never moved. Completed tasks still reserve no time. A task cannot be both completed and confirmed.
+
 Validation rejects empty or inverted windows, non-positive task durations, duplicate task IDs, unknown dependencies, and dependency cycles, including cycles involving completed tasks. Completion records must reference a task in `tasks`, with at most one record per task; violations return `UnknownCompletedTaskId(id)` or `DuplicateCompletedTaskId(id)`. It returns `InvalidEarliestStart(task_id, earliest_start, deadline)` when an explicit earliest start is at or after the deadline, and `InvalidMinimumBlock(task_id, minimum_block_minutes, duration_minutes)` when the minimum is non-positive or exceeds total work. An earlier start with too little time to fit a continuous task is valid input and yields `NoContinuousSlot`; so does a deadline before all available time on a task without an explicit start.
+
+`schedule_with_confirmed_blocks` additionally validates every confirmed block's task ID, positive length, containment in the union of availability windows, explicit earliest start, deadline, split minimum, and absence of overlap with fixed events or other confirmed blocks. It rejects wrong block counts or total durations, rather than treating a partial lock as work still to place. These cases have dedicated `ValidationError` variants such as `InvalidConfirmedWindow`, `ConfirmedOutsideAvailability`, `ConfirmedDurationMismatch`, `ConfirmedOverlapsFixedEvent`, and `ConfirmedBlocksOverlap`.
+
+This entry also checks the actual timeline of tasks already completed or confirmed. Every prerequisite of such a task must itself be completed or fully confirmed; otherwise it returns `UnresolvedPriorDependency(task_id, prerequisite_id)`. A prerequisite finishing after the completed task's actual completion, or after the first confirmed block of a confirmed task, returns `PriorDependencyFinishesLate(task_id, prerequisite_id, finished_at, actual_time)`. Equal boundary minutes are allowed. The older `schedule(...)` and `schedule_with_completed(...)` keep their previous behavior; this additional timeline check belongs to the new replanning entry.
 
 ## Behaviour
 
@@ -30,19 +37,21 @@ This is an initial deterministic greedy scheduler **across tasks**. Once all dep
 
 Every block of a splittable task, including the final block, must be at least `minimum_block_minutes` long, and the block lengths sum exactly to its total duration. A gap may be shortened or skipped so that later gaps can hold the remainder. For the *currently free gaps* of one task, the allocation test is complete: choosing the `k` largest-capacity later gaps can hold every integer amount from `k × minimum_block_minutes` through the sum of those gaps' capacities. This works on gap lengths, without a per-minute time table. Thus `SplitWorkIncomplete(remaining_minutes)` means no full allocation exists for that task **with already scheduled tasks kept in place**. It does not mean another task order or a reschedule of earlier work could not make room.
 
-Availability windows may be unordered, overlapping, duplicated, or touching; their union is treated as continuous available time. Task blocks do not overlap fixed events or other task blocks, even if several availability windows cover the same minutes. `Schedule.blocks` records scheduling decision order, which may differ from chronological order. The scheduler never changes the caller's input arrays.
+Availability windows may be unordered, overlapping, duplicated, or touching; their union is treated as continuous available time. Task blocks do not overlap fixed events or other task blocks, even if several availability windows cover the same minutes. Without confirmed blocks, `Schedule.blocks` records scheduling decision order; with confirmed blocks, their input order comes first, so the array need not be chronological. The scheduler never changes the caller's input arrays.
 
 An unscheduled task **does not mean** that no feasible schedule for all tasks exists mathematically. A different ordering can produce a better outcome. This library does not parse iCalendar data, implement recurrence rules, or provide general resource reservation; those directions are already covered by Mooncakes projects.
 
 ## Example outcomes
 
-The examples are public-API tests in `tests/scheduling_test.mbt`, `tests/splittable_test.mbt`, and `tests/completed_test.mbt`.
+The examples are public-API tests in `tests/scheduling_test.mbt`, `tests/splittable_test.mbt`, `tests/completed_test.mbt`, and `tests/confirmed_test.mbt`.
 
 - Student example: homework is assigned at minute `15`; `math-homework` is `[15, 60)`. Two lectures occupy `[60, 90)` and `[120, 150)`, so splittable `biology-exam-review` completes before minute `180` in `[90, 120)` and `[150, 180)`. `history-essay` remains unscheduled with `NoContinuousSlot`.
 - Project delivery example: materials arrive at minute `170`; `draft` is `[0, 90)`, `review` `[90, 120)`, and `release-package` `[170, 230)`; all tasks are scheduled.
 - Split project handoff example: `draft` is `[0, 30)`, `handoff` is `[60, 100)` and `[120, 140)` around two fixed events, and dependent `delivery-review` begins at `[140, 150)`.
 - Student to-do example with a completed prerequisite: `assignment-briefing` finished at minute `30` without occupying the new plan. A lecture occupies `[40, 50)`, so `homework` is `[50, 70)` and `quiz-preparation` is `[70, 80)`.
 - Project to-do example with completed prerequisites: `materials-ready` finished at `25` and `approval` at `72`. `assembly` is `[25, 40)`, split `documentation` is `[40, 50)` and `[60, 70)`, and `handoff` waits for both documentation and approval before occupying `[72, 77)`.
+- Student replan: confirmed `homework` stays `[0, 10)` when a new lecture occupies `[20, 35)`. `exam-review` moves from `[10, 25)` to `[35, 50)`, and `summary` moves from `[25, 35)` to `[50, 60)`.
+- Project replan: confirmed split `design` stays `[0, 10)` and `[20, 30)`. A new vendor call occupies `[30, 45)`, so `build` takes `[45, 60)`; `handoff` waits for both `build` and an approval completed at `65`, then takes `[65, 75)`.
 
 ## Development
 
